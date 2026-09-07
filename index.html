@@ -1,0 +1,3145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F2F1ED">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Armory</title>
+<link rel="manifest" href="manifest.json">
+<style>
+:root{
+  --field:#F2F1ED; --card:#FFFFFF; --card-2:#FAF9F6;
+  --ink:#1B1F23; --ink-2:#5C6169; --ink-3:#8C9096;
+  --rule:#D6D4CC; --rule-2:#E9E7E0; --zebra:#E9E6DD;
+  --brass:#8A6D2F; --brass-soft:#F1E9D6;
+  --copper:#A65432; --moss:#47613F; --flag:#A3352B;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,Consolas,monospace;
+  --pad:16px; --r:10px;
+  --navh:calc(58px + env(safe-area-inset-bottom));
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--field); color:var(--ink); font-family:var(--sans);
+  font-size:16px; line-height:1.45; -webkit-text-size-adjust:100%;
+  padding-bottom:var(--navh);
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-0.01em}
+h1{font-size:1.5rem}
+h2{font-size:1.0625rem}
+h3{font-size:0.9375rem}
+a{color:var(--brass)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+/* ---------- layout ---------- */
+header.top{
+  position:sticky;top:0;z-index:40;background:var(--field);
+  border-bottom:1px solid var(--rule);
+  padding:calc(10px + env(safe-area-inset-top)) var(--pad) 10px;
+  display:flex;align-items:baseline;gap:10px;
+}
+header.top .sub{color:var(--ink-2);font-size:0.8125rem}
+main{padding:var(--pad);max-width:760px;margin:0 auto}
+.screen{display:none}
+.screen.on{display:block}
+section.blk{margin:0 0 22px}
+section.blk>h2{margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.hint{color:var(--ink-2);font-size:0.8125rem;margin:0 0 10px}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--rule);border-radius:var(--r);padding:14px}
+.card+.card{margin-top:10px}
+.rows{border:1px solid var(--rule);border-radius:var(--r);background:var(--card);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;width:100%;
+  background:none;border:0;border-top:1px solid var(--rule-2);text-align:left}
+.rows>.row:first-child{border-top:0}
+.row.alt{background:var(--zebra)}
+.row:active,.row.alt:active{background:#DEDBD1}
+.row .grow{flex:1;min-width:0}
+.row .ttl{font-weight:550;font-size:0.9375rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .meta{color:var(--ink-2);font-size:0.8125rem}
+.grouphead{padding:13px 14px 9px;background:var(--card);
+  border-top:2px solid var(--brass);
+  display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-size:1.125rem;font-weight:700;letter-spacing:-0.015em;color:var(--ink)}
+.grouphead .num{font-size:0.8125rem;font-weight:600;color:var(--ink-2)}
+.rows>.grouphead:first-child{border-top:0;padding-top:12px}
+.chev{color:var(--ink-3);flex:none}
+
+/* ---------- the counter, the one loud element ---------- */
+.counter{display:flex;align-items:flex-end;gap:8px;margin:2px 0 0}
+.counter .big{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:2.5rem;line-height:0.95;font-weight:500;letter-spacing:-0.03em}
+.counter .unit{color:var(--ink-2);font-size:0.8125rem;padding-bottom:4px}
+.gauge{margin-top:10px}
+.gauge .lbl{display:flex;justify-content:space-between;gap:8px;
+  font-size:0.75rem;color:var(--ink-2);margin-bottom:4px}
+.gauge .lbl b{font-weight:550;font-family:var(--mono);color:var(--ink)}
+.bar{height:3px;background:var(--rule-2);border-radius:2px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--brass);border-radius:2px}
+.bar.warn>i{background:var(--copper)}
+.bar.over>i{background:var(--flag)}
+
+/* ---------- pills / tags ---------- */
+.tag{display:inline-block;font-size:0.6875rem;font-weight:600;padding:2px 7px;
+  border-radius:999px;background:var(--brass-soft);color:var(--brass);white-space:nowrap}
+.tag.flag{background:#F6E2E0;color:var(--flag)}
+.tag.moss{background:#E4EBE2;color:var(--moss)}
+.tag.mute{background:var(--rule-2);color:var(--ink-2)}
+.tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--rule);
+  background:var(--card);font-size:0.9375rem;font-weight:550}
+.btn:active{background:var(--card-2)}
+.btn.pri{background:var(--brass);border-color:var(--brass);color:#fff}
+.btn.pri:active{background:#755C27}
+.btn.dgr{color:var(--flag);border-color:#E7C9C5}
+.btn.sm{min-height:34px;padding:0 11px;font-size:0.8125rem;border-radius:7px}
+.btn.wide{width:100%}
+.btn:disabled{opacity:0.42}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+.btnrow.split>.btn{flex:1}
+.linkbtn{background:none;border:0;padding:0;color:var(--brass);font-size:0.8125rem;font-weight:550}
+
+/* ---------- forms ---------- */
+label.f{display:block;margin:0 0 11px}
+label.f>span{display:block;font-size:0.8125rem;color:var(--ink-2);margin-bottom:4px}
+input,select,textarea{
+  width:100%;min-height:44px;padding:9px 11px;border:1px solid var(--rule);
+  border-radius:8px;background:var(--card)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brass);outline-offset:-1px;border-color:var(--brass)}
+input[type=number]{font-family:var(--mono);font-variant-numeric:tabular-nums}
+textarea{min-height:76px;resize:vertical;line-height:1.4}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.f3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 10px}
+fieldset{border:1px solid var(--rule);border-radius:var(--r);padding:12px;margin:0 0 12px}
+legend{font-size:0.8125rem;font-weight:600;color:var(--ink-2);padding:0 5px}
+
+/* ---------- stepper (brought/returned counts) ---------- */
+.step{display:flex;align-items:center;gap:0;border:1px solid var(--rule);
+  border-radius:8px;overflow:hidden;background:var(--card)}
+.step button{width:44px;min-height:42px;border:0;background:var(--card-2);
+  font-size:1.2rem;line-height:1;color:var(--ink-2)}
+.step button:active{background:var(--rule-2)}
+.step input{border:0;border-radius:0;text-align:center;min-height:42px;
+  border-left:1px solid var(--rule);border-right:1px solid var(--rule)}
+.step input:focus{outline-offset:-2px}
+
+/* ---------- sheet / modal ---------- */
+.scrim{position:fixed;inset:0;background:rgba(27,31,35,0.42);z-index:60;
+  opacity:0;pointer-events:none;transition:opacity .18s}
+.scrim.on{opacity:1;pointer-events:auto}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:61;background:var(--field);
+  border-radius:14px 14px 0 0;max-height:92vh;display:flex;flex-direction:column;
+  transform:translateY(101%);transition:transform .22s ease-out;
+  box-shadow:0 -2px 24px rgba(27,31,35,0.18)}
+.sheet.on{transform:translateY(0)}
+.sheet>header{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--rule);flex:none}
+.sheet>header h2{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet>.body{overflow-y:auto;padding:14px;padding-bottom:calc(14px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling:touch}
+.x{width:38px;height:38px;border:0;background:none;border-radius:8px;
+  font-size:1.35rem;line-height:1;color:var(--ink-2)}
+.x:active{background:var(--rule-2)}
+@media (min-width:700px){
+  .sheet{left:50%;right:auto;transform:translate(-50%,101%);width:660px;
+    bottom:0;border-radius:14px 14px 0 0}
+  .sheet.on{transform:translate(-50%,0)}
+}
+@media (prefers-reduced-motion:reduce){
+  .sheet,.scrim{transition:none}
+}
+
+/* ---------- bottom nav ---------- */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--card);
+  border-top:1px solid var(--rule);display:flex;
+  padding-bottom:env(safe-area-inset-bottom)}
+nav.tabs button{flex:1;border:0;background:none;padding:7px 2px 8px;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  font-size:0.6875rem;font-weight:600;color:var(--ink-3);min-height:58px}
+nav.tabs button svg{width:21px;height:21px;stroke:currentColor;fill:none;
+  stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+nav.tabs button.on{color:var(--brass)}
+nav.tabs button .dot{position:absolute;top:6px;margin-left:15px;width:6px;height:6px;
+  border-radius:50%;background:var(--flag)}
+
+/* ---------- misc ---------- */
+.empty{border:1px dashed var(--rule);border-radius:var(--r);padding:22px 16px;
+  text-align:center;color:var(--ink-2);font-size:0.875rem}
+.empty b{display:block;color:var(--ink);font-weight:600;margin-bottom:4px;font-size:0.9375rem}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+  border-top:1px solid var(--rule-2);font-size:0.875rem}
+.kv:first-child{border-top:0}
+.kv dt{color:var(--ink-2);margin:0}
+.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+dl{margin:0}
+.note{background:var(--brass-soft);border-radius:8px;padding:10px 12px;
+  font-size:0.8125rem;color:#6E5624;margin:0 0 12px}
+.note.flag{background:#F6E2E0;color:#7E2A22}
+.toast{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--navh) + 14px);z-index:80;background:var(--ink);color:#fff;
+  padding:11px 16px;border-radius:9px;font-size:0.875rem;max-width:88vw;
+  opacity:0;transition:opacity .2s;pointer-events:none;display:flex;gap:12px;align-items:center}
+.toast.on{opacity:1;pointer-events:auto}
+.toast button{background:none;border:0;color:#E3C57F;font-weight:600;font-size:0.875rem;padding:0}
+.split-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule-2);
+  border-radius:8px;overflow:hidden;margin-top:10px}
+.split-nums div{background:var(--card);padding:8px 6px;text-align:center}
+.split-nums span{display:block;font-size:0.6875rem;color:var(--ink-2)}
+.split-nums b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:550;font-size:0.9375rem}
+.stripe{display:flex;gap:2px;margin-top:8px;align-items:flex-end;height:34px}
+.stripe i{flex:1;background:var(--brass-soft);border-radius:1px 1px 0 0;min-height:2px}
+.stripe i.hi{background:var(--brass)}
+.calhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-size:1.125rem;font-weight:700;letter-spacing:-0.015em;
+  margin:22px 0 9px;padding-bottom:6px;border-bottom:2px solid var(--brass)}
+.calhead:first-child{margin-top:0}
+.calhead .num{font-size:0.8125rem;font-weight:600;color:var(--ink-2)}
+.bucket{padding:11px 0;border-top:1px solid var(--rule-2)}
+.bucket:first-of-type{border-top:0}
+.bucket .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.bucket .top b{font-weight:600;font-size:0.9375rem}
+.bucket .avail{font-size:0.75rem;color:var(--ink-2);font-family:var(--mono);flex:none}
+.bucket .ctl{display:flex;gap:10px;align-items:center;margin-top:7px}
+.bucket .ctl .step{flex:none;width:132px}
+.bucket .ctl .of{font-size:0.8125rem;color:var(--ink-2)}
+.mono-list{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:0.8125rem;color:var(--ink-2)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1 id="ttl">Armory</h1>
+  <span class="sub" id="subttl"></span>
+</header>
+
+<main>
+  <div class="screen on" id="sc-home"></div>
+  <div class="screen" id="sc-guns"></div>
+  <div class="screen" id="sc-ammo"></div>
+  <div class="screen" id="sc-mags"></div>
+  <div class="screen" id="sc-range"></div>
+  <div class="screen" id="sc-velocity"></div>
+  <div class="screen" id="sc-nfa"></div>
+  <div class="screen" id="sc-tools"></div>
+  <div class="screen" id="sc-data"></div>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-go="home" class="on">
+    <svg viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10.5V20h12v-9.5"/></svg>
+    Home</button>
+  <button data-go="guns">
+    <svg viewBox="0 0 24 24"><path d="M3 9h13l3 3h2"/><path d="M3 9v4h4l1.5 3H12"/><path d="M8 13v3"/></svg>
+    Guns</button>
+  <button data-go="ammo">
+    <svg viewBox="0 0 24 24"><path d="M9 3.5c1.6 1.4 2.4 3.1 2.4 5.2V20H6.6V8.7c0-2.1.8-3.8 2.4-5.2Z"/><path d="M6.6 12h4.8"/><path d="M15 8h4v12h-4z"/></svg>
+    Ammo</button>
+  <button data-go="mags">
+    <svg viewBox="0 0 24 24"><path d="M7 3h10l-1.5 18h-7L7 3Z"/><path d="M7.6 9h8.8"/><path d="M8 15h8"/></svg>
+    Mags</button>
+  <button data-go="range">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></svg>
+    Range</button>
+</nav>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetttl">
+  <header><h2 id="sheetttl"></h2><button class="x" id="sheetx" aria-label="Close">&times;</button></header>
+  <div class="body" id="sheetbody"></div>
+</div>
+
+<div class="toast" id="toast"><span id="toastmsg"></span><button id="toastact" hidden></button></div>
+<script>
+const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads":[],"trips":[],"velocity":[],"nfa":[],"ledger":[],"containers":[],"schedules":[{"id":"sched-ar","name":"AR maintenance","milestones":[{"rounds":5000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":7500,"task":"Extractor, extractor springs, gas rings."},{"rounds":10000,"task":"Replace BCG and buffer spring. Check barrel accuracy."},{"rounds":12500,"task":"Extractor, extractor springs, gas rings."},{"rounds":15000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":17500,"task":"Extractor, extractor springs, gas rings."},{"rounds":20000,"task":"Replace BCG, buffer spring, and barrel. Inspect the rifle thoroughly."}]}],"rev":0};
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Armory — offline range and inventory log
+   Single file. All data lives on this device in localStorage under KEY.
+   Export regularly from Home > Data; that JSON is also the import format
+   for the eventual native build.
+   ========================================================================== */
+
+const KEY = "armory.state.v1";
+const UNDO_KEY = "armory.undo.v1";
+const UNDO_MAX = 8;
+
+let S = null;          // live state
+let SCREEN = "home";
+let DIRTY = false;
+
+/* ---------------------------------------------------------------- helpers */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+const int = (v) => Math.round(n(v));
+const fmt = (v) => int(v).toLocaleString("en-US");
+const uid = (p) => p + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
+const today = () => new Date().toISOString().slice(0, 10);
+const dshow = (s) => s ? s : "\u2014";
+const plural = (c, s, p) => c === 1 ? `1 ${s}` : `${fmt(c)} ${p || s + "s"}`;
+
+function daysBetween(a, b) {
+  if (!a || !b) return null;
+  const t = (new Date(b) - new Date(a)) / 86400000;
+  return Number.isFinite(t) ? Math.round(t) : null;
+}
+
+/* ---------------------------------------------------------------- storage */
+function load() {
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { /* private mode */ }
+  if (raw) {
+    try { return migrate(JSON.parse(raw)); } catch (e) {
+      console.error("Saved data would not parse, falling back to seed.", e);
+    }
+  }
+  return migrate(JSON.parse(JSON.stringify(SEED)));
+}
+
+function migrate(st) {
+  st.schemaVersion = st.schemaVersion || 1;
+  if (st.rev == null) st.rev = 0;
+  if (!st.deviceName && typeof defaultDeviceName === "function") st.deviceName = defaultDeviceName();
+  const arrays = ["firearms", "ammo", "magTypes", "magLoads", "trips",
+                  "velocity", "nfa", "containers", "schedules", "ledger"];
+  arrays.forEach((k) => { if (!Array.isArray(st[k])) st[k] = []; });
+  st.firearms.forEach((f) => {
+    f.barrel = f.barrel || { label: "Factory", rounds: 0, sinceDeepClean: 0, sinceBarrelClean: 0 };
+    f.barrelHistory = f.barrelHistory || [];
+    if (f.deepCleanEvery == null) f.deepCleanEvery = 1000;
+    if (f.barrelCleanEvery == null) f.barrelCleanEvery = 500;
+  });
+  return st;
+}
+
+/* Every change bumps a revision. Sync uses it to tell "this device has edits
+   OneDrive has not seen" from "nothing to send". Pass noRev when writing a copy
+   that came from somewhere else, so adopting a remote copy is not itself an edit. */
+function save(opts) {
+  opts = opts || {};
+  if (!opts.noRev) {
+    S.rev = int(S.rev) + 1;
+    S.updatedAt = new Date().toISOString();
+  }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(S));
+    DIRTY = false;
+  } catch (e) {
+    toast("Could not save. Device storage may be full — export your data now.");
+    console.error(e);
+  }
+  if (!opts.noRev && typeof queuePush === "function") queuePush();
+}
+
+/* Undo works on whole-state snapshots. The dataset is small enough that this
+   is cheaper and far safer than reversing each mutation by hand. */
+function snapshot(label) {
+  let stack = [];
+  try { stack = JSON.parse(localStorage.getItem(UNDO_KEY) || "[]"); } catch (e) {}
+  stack.push({ label, at: Date.now(), state: JSON.stringify(S) });
+  while (stack.length > UNDO_MAX) stack.shift();
+  try { localStorage.setItem(UNDO_KEY, JSON.stringify(stack)); } catch (e) {
+    // Snapshots are the first thing to sacrifice under pressure.
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(stack.slice(-2))); } catch (e2) {}
+  }
+}
+
+function undoLast() {
+  let stack = [];
+  try { stack = JSON.parse(localStorage.getItem(UNDO_KEY) || "[]"); } catch (e) {}
+  const last = stack.pop();
+  if (!last) { toast("Nothing to undo."); return; }
+  S = migrate(JSON.parse(last.state));
+  try { localStorage.setItem(UNDO_KEY, JSON.stringify(stack)); } catch (e) {}
+  save(); render();
+  toast("Undid: " + last.label);
+}
+
+function undoLabel() {
+  try {
+    const st = JSON.parse(localStorage.getItem(UNDO_KEY) || "[]");
+    return st.length ? st[st.length - 1].label : null;
+  } catch (e) { return null; }
+}
+
+function commit(label) { save(); render(); if (label) toast(label); }
+
+/* ---------------------------------------------------------------- lookups */
+const byId = (arr, id) => arr.find((x) => x.id === id) || null;
+const gun = (id) => byId(S.firearms, id);
+const ammoOf = (id) => byId(S.ammo, id);
+const magType = (id) => byId(S.magTypes, id);
+
+const ammoLabel = (a) => a
+  ? [a.brand, a.type, a.grains ? a.grains + "gr" : ""].filter(Boolean).join(" ")
+  : "Unknown";
+const ammoFull = (a) => a ? `${a.caliber} ${ammoLabel(a)}` : "Unknown";
+const magLabel = (m) => m
+  ? m.label + (m.capacity ? ` (${m.capacity})` : "")
+  : "Unassigned";
+
+/* rounds currently sitting in magazines, per ammo line */
+function loadedFor(ammoId) {
+  return S.magLoads.filter((l) => l.ammoId === ammoId)
+    .reduce((t, l) => t + int(l.rounds), 0);
+}
+function onHand(a) { return int(a.qtyBoxed) + int(a.qtyLoose) + loadedFor(a.id); }
+
+/* how many physical magazines of a type are currently spoken for */
+function magsInUse(magTypeId) {
+  return S.magLoads.filter((l) => l.magTypeId === magTypeId).length;
+}
+function magsFree(m) { return int(m.quantity) - magsInUse(m.id); }
+
+/* magazine loads that are already committed to the open trip */
+function magsOnTrip() {
+  const t = openTrip();
+  if (!t) return new Set();
+  const s = new Set();
+  t.entries.forEach((e) => (e.mags || []).forEach((g) => s.add(g.magLoadId)));
+  return s;
+}
+
+function calibers() {
+  const order = [];
+  S.ammo.forEach((a) => { if (!order.includes(a.caliber)) order.push(a.caliber); });
+  return order;
+}
+
+function caliberTotal(cal) {
+  return S.ammo.filter((a) => a.caliber === cal)
+    .reduce((t, a) => t + onHand(a), 0);
+}
+
+/* .223 and 5.56 shoot out of the same rifles, so the sheet kept a combined
+   figure. Preserved here rather than making it a lookup every time. */
+const AR_CALS = [".223", "5.56"];
+function arTotal() { return AR_CALS.reduce((t, c) => t + caliberTotal(c), 0); }
+
+/* ---------------------------------------------------- cleaning + schedules */
+function cleanState(f) {
+  const b = f.barrel;
+  const out = { barrel: null, deep: null, worst: "ok" };
+  if (int(f.barrelCleanEvery) > 0) {
+    const p = int(b.sinceBarrelClean) / int(f.barrelCleanEvery);
+    out.barrel = { since: int(b.sinceBarrelClean), every: int(f.barrelCleanEvery),
+      pct: Math.min(p, 1.6), over: p >= 1, near: p >= 0.8 };
+  }
+  if (int(f.deepCleanEvery) > 0) {
+    const p = int(b.sinceDeepClean) / int(f.deepCleanEvery);
+    out.deep = { since: int(b.sinceDeepClean), every: int(f.deepCleanEvery),
+      pct: Math.min(p, 1.6), over: p >= 1, near: p >= 0.8 };
+  }
+  const any = [out.barrel, out.deep].filter(Boolean);
+  if (any.some((x) => x.over)) out.worst = "over";
+  else if (any.some((x) => x.near)) out.worst = "near";
+  return out;
+}
+
+function schedFor(f) { return f.scheduleId ? byId(S.schedules, f.scheduleId) : null; }
+
+/* Milestones are measured against receiver rounds, matching the spreadsheet. */
+function milestones(f) {
+  const sc = schedFor(f);
+  if (!sc) return { done: [], next: null, due: null };
+  const r = int(f.receiverRounds);
+  const ms = sc.milestones.slice().sort((a, b) => a.rounds - b.rounds);
+  const done = ms.filter((m) => r >= m.rounds);
+  const next = ms.find((m) => r < m.rounds) || null;
+  const acked = f.ackMilestones || [];
+  const due = done.filter((m) => !acked.includes(m.rounds));
+  return { done, next, due, all: ms };
+}
+
+/* ---------------------------------------------------------------- velocity */
+function vstats(shots) {
+  const s = (shots || []).map(n).filter((x) => x > 0);
+  if (!s.length) return null;
+  const avg = s.reduce((a, b) => a + b, 0) / s.length;
+  const es = Math.max(...s) - Math.min(...s);
+  const sd = s.length > 1
+    ? Math.sqrt(s.reduce((t, x) => t + (x - avg) ** 2, 0) / (s.length - 1))
+    : 0;
+  return { n: s.length, avg, sd, es, lo: Math.min(...s), hi: Math.max(...s) };
+}
+
+/* ---------------------------------------------------------------- trips */
+function openTrip() { return S.trips.find((t) => t.status === "open") || null; }
+function tripEntryFired(e) {
+  const loose = int(e.broughtBoxed) + int(e.broughtLoose)
+              - int(e.returnedBoxed) - int(e.returnedLoose);
+  const fromMags = (e.mags || []).reduce(
+    (t, g) => t + int(g.roundsOut) - int(g.roundsBack), 0);
+  return { loose: Math.max(loose, 0), mags: Math.max(fromMags, 0),
+    total: Math.max(loose, 0) + Math.max(fromMags, 0),
+    raw: loose + fromMags, bad: loose < 0 || fromMags < 0 };
+}
+function tripBrought(e) {
+  return int(e.broughtBoxed) + int(e.broughtLoose)
+    + (e.mags || []).reduce((t, g) => t + int(g.roundsOut), 0);
+}
+
+/* ---------------------------------------------------------------- chrome */
+const SCREENS = {
+  home: ["Armory", ""], guns: ["Firearms", ""], ammo: ["Ammunition", ""],
+  mags: ["Magazines", ""], range: ["Range", ""], velocity: ["Velocity", ""],
+  nfa: ["NFA items", ""], tools: ["Tools", ""], data: ["Data", ""],
+};
+
+function go(name) {
+  SCREEN = name;
+  $$(".screen").forEach((s) => s.classList.toggle("on", s.id === "sc-" + name));
+  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === name));
+  window.scrollTo(0, 0);
+  render();
+}
+
+function render() {
+  const [t, sub] = SCREENS[SCREEN] || ["Armory", ""];
+  $("#ttl").textContent = t;
+  $("#subttl").textContent = sub;
+  const fn = RENDER[SCREEN];
+  if (fn) {
+    const host = $("#sc-" + SCREEN);
+    host.innerHTML = fn();
+    stripeRows(host);
+    if (SCREEN === "data" && typeof paintStorage === "function") paintStorage();
+  }
+  const trip = openTrip();
+  const rb = $('#tabs button[data-go="range"]');
+  $$(".dot").forEach((d) => d.remove());
+  if (trip && rb) {
+    const d = document.createElement("span"); d.className = "dot"; rb.appendChild(d);
+  }
+}
+
+/* ---------------------------------------------------------------- sheet */
+let sheetMount = null;
+function openSheet(title, html, onmount) {
+  $("#sheetttl").textContent = title;
+  $("#sheetbody").innerHTML = html;
+  $("#sheet").classList.add("on");
+  $("#scrim").classList.add("on");
+  document.body.style.overflow = "hidden";
+  stripeRows($("#sheetbody"));
+  sheetMount = onmount || null;
+  if (sheetMount) sheetMount($("#sheetbody"));
+}
+function closeSheet() {
+  $("#sheet").classList.remove("on");
+  $("#scrim").classList.remove("on");
+  document.body.style.overflow = "";
+  sheetMount = null;
+  setTimeout(() => { if (!$("#sheet").classList.contains("on")) $("#sheetbody").innerHTML = ""; }, 240);
+}
+function reSheet(title, html, onmount) { openSheet(title, html, onmount); }
+
+/* ---------------------------------------------------------------- toast */
+let toastT = null;
+function toast(msg, actLabel, actFn) {
+  $("#toastmsg").textContent = msg;
+  const b = $("#toastact");
+  if (actLabel) { b.hidden = false; b.textContent = actLabel; b.onclick = () => { hideToast(); actFn(); }; }
+  else { b.hidden = true; b.onclick = null; }
+  $("#toast").classList.add("on");
+  clearTimeout(toastT);
+  toastT = setTimeout(hideToast, actLabel ? 7000 : 3200);
+}
+function hideToast() { $("#toast").classList.remove("on"); }
+
+/* ---------------------------------------------------------------- widgets */
+function gauge(label, g) {
+  if (!g) return "";
+  const cls = g.over ? "over" : g.near ? "warn" : "";
+  const left = g.every - g.since;
+  const right = g.over
+    ? `<b>${fmt(-left)}</b> over`
+    : `<b>${fmt(left)}</b> to go`;
+  return `<div class="gauge"><div class="lbl"><span>${esc(label)} <b>${fmt(g.since)}</b>/${fmt(g.every)}</span><span>${right}</span></div>
+    <div class="bar ${cls}"><i style="width:${Math.min(g.pct * 100, 100).toFixed(1)}%"></i></div></div>`;
+}
+
+function stepper(name, val, min) {
+  return `<div class="step" data-step>
+    <button type="button" data-nudge="-1" aria-label="Less">&minus;</button>
+    <input type="number" inputmode="numeric" name="${esc(name)}" value="${int(val)}"
+      min="${min == null ? 0 : min}" step="1">
+    <button type="button" data-nudge="1" aria-label="More">+</button></div>`;
+}
+
+function selOpts(items, val, labelFn, valFn) {
+  return items.map((x) => {
+    const v = valFn ? valFn(x) : x.id;
+    return `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(labelFn(x))}</option>`;
+  }).join("");
+}
+
+/* Grouped variant: browsers render optgroup labels bold, which is exactly the
+   caliber divider we want inside the firearm and ammunition pickers. */
+function selOptsGrouped(items, val, labelFn, groupFn) {
+  const order = [];
+  items.forEach((x) => { const g = groupFn(x) || "Other"; if (!order.includes(g)) order.push(g); });
+  return order.map((g) => `<optgroup label="${esc(g)}">` +
+    items.filter((x) => (groupFn(x) || "Other") === g).map((x) =>
+      `<option value="${esc(x.id)}"${x.id === val ? " selected" : ""}>${esc(labelFn(x))}</option>`
+    ).join("") + `</optgroup>`).join("");
+}
+
+/* Stripe every list after it is drawn. The counter restarts at each caliber
+   heading so the first line under a heading is always the light one. */
+function stripeRows(root) {
+  $$(".rows", root || document).forEach((box) => {
+    let i = 0;
+    Array.from(box.children).forEach((el) => {
+      if (el.classList.contains("grouphead")) { i = 0; return; }
+      if (!el.classList.contains("row")) return;
+      el.classList.toggle("alt", i % 2 === 1);
+      i++;
+    });
+  });
+}
+
+function readForm(root) {
+  const o = {};
+  $$("input,select,textarea", root).forEach((el) => {
+    if (!el.name) return;
+    if (el.type === "checkbox") { o[el.name] = el.checked; return; }
+    o[el.name] = el.type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value;
+  });
+  return o;
+}
+
+function emptyState(title, body, btn, act) {
+  return `<div class="empty"><b>${esc(title)}</b>${esc(body)}
+    ${btn ? `<div style="margin-top:12px"><button class="btn pri sm" data-act="${esc(act)}">${esc(btn)}</button></div>` : ""}</div>`;
+}
+</script>
+<script>
+"use strict";
+const RENDER = {};
+const ACT = {};
+
+/* ============================================================ HOME ====== */
+RENDER.home = function () {
+  const trip = openTrip();
+  let h = typeof syncLine === "function" ? syncLine() : "";
+
+  if (trip) {
+    const shots = trip.entries.reduce((t, e) => t + tripBrought(e), 0);
+    h += `<section class="blk"><div class="card" style="border-color:var(--brass)">
+      <h2>Trip in progress</h2>
+      <p class="hint" style="margin:4px 0 10px">${esc(trip.location || "No location")} &middot; ${esc(trip.date)}
+        &middot; ${plural(trip.entries.length, "line")} &middot; ${fmt(shots)} rounds packed</p>
+      <div class="btnrow split">
+        <button class="btn" data-act="go-range">Open trip</button>
+        <button class="btn pri" data-act="trip-closeout">Log what came back</button>
+      </div></div></section>`;
+  }
+
+  const bare = !S.firearms.length && !S.ammo.length && !S.magTypes.length;
+  if (bare) {
+    h += `<section class="blk"><div class="card" style="border-color:var(--brass)">
+      <h2>Start with your spreadsheet</h2>
+      <p class="hint" style="margin:6px 0 12px">Import <b>armory-import.json</b> to load the
+        firearms, ammunition, magazines, velocity strings and NFA items pulled out of
+        Firearms_Inventory_v2.xlsm. Or just start adding things by hand.</p>
+      <button class="btn pri wide" data-act="go-data">Import my data</button></div></section>`;
+  }
+
+  /* ---- attention ---- */
+  const items = [];
+  S.firearms.forEach((f) => {
+    const c = cleanState(f);
+    if (c.barrel && c.barrel.over)
+      items.push([2, f.name, `barrel clean overdue by ${fmt(c.barrel.since - c.barrel.every)}`, f.id]);
+    else if (c.barrel && c.barrel.near)
+      items.push([1, f.name, `barrel clean in ${fmt(c.barrel.every - c.barrel.since)}`, f.id]);
+    if (c.deep && c.deep.over)
+      items.push([2, f.name, `deep clean overdue by ${fmt(c.deep.since - c.deep.every)}`, f.id]);
+    else if (c.deep && c.deep.near)
+      items.push([1, f.name, `deep clean in ${fmt(c.deep.every - c.deep.since)}`, f.id]);
+    const ms = milestones(f);
+    (ms.due || []).forEach((m) =>
+      items.push([3, f.name, `passed ${fmt(m.rounds)} rounds \u2014 service due`, f.id]));
+    if (ms.next && int(f.receiverRounds) >= ms.next.rounds - 250)
+      items.push([1, f.name, `${fmt(ms.next.rounds - int(f.receiverRounds))} rounds to the ${fmt(ms.next.rounds)} service`, f.id]);
+  });
+  items.sort((a, b) => b[0] - a[0]);
+
+  h += `<section class="blk"><h2>Needs attention</h2>`;
+  if (!items.length) {
+    h += `<div class="empty">Everything is inside its interval. Nothing to do.</div>`;
+  } else {
+    h += `<div class="rows">` + items.slice(0, 9).map(([sev, name, why, id]) =>
+      `<button class="row" data-act="gun-open" data-id="${esc(id)}">
+        <span class="grow"><span class="ttl">${esc(name)}</span>
+        <span class="meta">${esc(why)}</span></span>
+        <span class="tag ${sev === 3 ? "flag" : sev === 2 ? "flag" : "mute"}">${sev >= 2 ? "due" : "soon"}</span>
+        <span class="chev">&rsaquo;</span></button>`).join("") + `</div>`;
+    if (items.length > 9) h += `<p class="hint" style="margin-top:8px">${items.length - 9} more.</p>`;
+  }
+  h += `</section>`;
+
+  /* ---- on hand ---- */
+  const cals = calibers();
+  const boxed = S.ammo.reduce((t, a) => t + int(a.qtyBoxed), 0);
+  const loose = S.ammo.reduce((t, a) => t + int(a.qtyLoose), 0);
+  const inMags = S.magLoads.reduce((t, l) => t + int(l.rounds), 0);
+  h += `<section class="blk"><h2>Rounds on hand</h2>
+    <div class="card"><div class="counter"><span class="big">${fmt(boxed + loose + inMags)}</span>
+      <span class="unit">rounds, all calibers</span></div>
+      <div class="split-nums">
+        <div><span>Boxed</span><b>${fmt(boxed)}</b></div>
+        <div><span>Loose</span><b>${fmt(loose)}</b></div>
+        <div><span>In mags</span><b>${fmt(inMags)}</b></div>
+        <div><span>Mags out</span><b>${fmt(S.magLoads.length)}</b></div>
+      </div></div>`;
+  h += `<div class="rows" style="margin-top:10px">`;
+  if (AR_CALS.some((c) => cals.includes(c))) {
+    h += `<button class="row" data-act="go-ammo"><span class="grow">
+      <span class="ttl">AR combined</span><span class="meta">.223 and 5.56 together</span></span>
+      <span class="num" style="font-weight:550">${fmt(arTotal())}</span></button>`;
+  }
+  h += cals.map((c) => `<button class="row" data-act="go-ammo">
+      <span class="grow"><span class="ttl">${esc(c)}</span></span>
+      <span class="num" style="font-weight:550">${fmt(caliberTotal(c))}</span></button>`).join("");
+  h += `</div></section>`;
+
+  /* ---- more ---- */
+  h += `<section class="blk"><h2>More</h2><div class="rows">
+    <button class="row" data-act="go-velocity"><span class="grow"><span class="ttl">Velocity</span>
+      <span class="meta">${plural(S.velocity.length, "string")} recorded</span></span><span class="chev">&rsaquo;</span></button>
+    <button class="row" data-act="go-nfa"><span class="grow"><span class="ttl">NFA items</span>
+      <span class="meta">${plural(S.nfa.length, "item")}</span></span><span class="chev">&rsaquo;</span></button>
+    <button class="row" data-act="go-tools"><span class="grow"><span class="ttl">Count ammo by weight</span>
+      <span class="meta">Scale, tare, reference weight</span></span><span class="chev">&rsaquo;</span></button>
+    <button class="row" data-act="go-data"><span class="grow"><span class="ttl">Export and backup</span>
+      <span class="meta">${S.trips.filter((t) => t.status === "closed").length} trips logged</span></span><span class="chev">&rsaquo;</span></button>
+  </div></section>`;
+
+  const ul = undoLabel();
+  if (ul) h += `<section class="blk"><button class="btn wide" data-act="undo">Undo: ${esc(ul)}</button></section>`;
+
+  return h;
+};
+
+/* ============================================================ GUNS ====== */
+RENDER.guns = function () {
+  let h = `<section class="blk"><h2>Firearms
+    <button class="btn sm" data-act="gun-new">Add</button></h2></section>`;
+  if (!S.firearms.length) return h + emptyState("No firearms yet", "Add one to start counting rounds.", "Add a firearm", "gun-new");
+
+  const gcals = [];
+  S.firearms.forEach((f) => {
+    const c = f.caliber || "Caliber not set";
+    if (!gcals.includes(c)) gcals.push(c);
+  });
+
+  h += gcals.map((cal) => {
+    const items = S.firearms.filter((f) => (f.caliber || "Caliber not set") === cal);
+    return `<div class="calhead"><span>${esc(cal)}</span>
+      <span class="num">${fmt(items.reduce((t, f) => t + int(f.receiverRounds), 0))} rounds</span></div>`
+      + items.map(gunCard).join("");
+  }).join("");
+  return h;
+};
+
+function gunCard(f) {
+    const c = cleanState(f);
+    const ms = milestones(f);
+    return `<div class="card" style="margin-bottom:10px">
+      <button class="row" style="padding:0;border:0;width:100%" data-act="gun-open" data-id="${esc(f.id)}">
+        <span class="grow">
+          <span class="ttl" style="font-size:1.0625rem">${esc(f.name)}</span>
+          <span class="meta">${esc(f.caliber || "caliber not set")}${f.serial ? " \u00b7 " + esc(f.serial) : ""}</span>
+        </span><span class="chev">&rsaquo;</span></button>
+      <div class="counter"><span class="big">${fmt(f.receiverRounds)}</span><span class="unit">rounds fired</span></div>
+      ${gauge("Barrel clean", c.barrel)}
+      ${gauge("Deep clean", c.deep)}
+      ${(ms.due && ms.due.length) ? `<div class="tags"><span class="tag flag">${fmt(ms.due[ms.due.length - 1].rounds)} service due</span></div>`
+        : ms.next ? `<div class="tags"><span class="tag mute">next service at ${fmt(ms.next.rounds)}</span></div>` : ""}
+    </div>`;
+}
+
+ACT["gun-open"] = (id) => gunSheet(id);
+
+function gunSheet(id) {
+  const f = gun(id);
+  if (!f) return;
+  const c = cleanState(f);
+  const ms = milestones(f);
+  const b = f.barrel;
+  let h = `<div class="card"><div class="counter"><span class="big">${fmt(f.receiverRounds)}</span>
+      <span class="unit">rounds through the receiver</span></div>
+    <dl style="margin-top:10px">
+      <div class="kv"><dt>This barrel</dt><dd>${fmt(b.rounds)}${b.lengthIn ? ` &middot; ${b.lengthIn}in` : ""}</dd></div>
+      <div class="kv"><dt>Last barrel clean</dt><dd>${esc(dshow(b.lastBarrelClean))}</dd></div>
+      <div class="kv"><dt>Last deep clean</dt><dd>${esc(dshow(b.lastDeepClean))}</dd></div>
+      <div class="kv"><dt>Last fired</dt><dd>${esc(dshow(f.lastShotDate))}</dd></div>
+    </dl>
+    ${gauge("Barrel clean", c.barrel)}${gauge("Deep clean", c.deep)}</div>
+
+  <div class="btnrow split" style="margin:12px 0">
+    <button class="btn" data-act="gun-cleanbarrel" data-id="${esc(f.id)}">Cleaned barrel</button>
+    <button class="btn" data-act="gun-cleandeep" data-id="${esc(f.id)}">Deep cleaned</button>
+  </div>
+  <button class="btn wide" data-act="gun-addrounds" data-id="${esc(f.id)}"
+    style="margin-bottom:12px">Add rounds by hand</button>`;
+
+  if (ms.all && ms.all.length) {
+    h += `<fieldset><legend>${esc(schedFor(f).name)}</legend>`;
+    h += ms.all.map((m) => {
+      const passed = int(f.receiverRounds) >= m.rounds;
+      const acked = (f.ackMilestones || []).includes(m.rounds);
+      const tag = !passed ? `<span class="tag mute">${fmt(m.rounds - int(f.receiverRounds))} away</span>`
+        : acked ? `<span class="tag moss">done</span>`
+        : `<span class="tag flag">due</span>`;
+      return `<div style="padding:9px 0;border-top:1px solid var(--rule-2)">
+        <div style="display:flex;gap:8px;align-items:center">
+          <b class="num" style="font-weight:550">${fmt(m.rounds)}</b>${tag}
+          ${passed && !acked ? `<button class="linkbtn" style="margin-left:auto"
+            data-act="gun-ack" data-id="${esc(f.id)}" data-v="${m.rounds}">Mark done</button>` : ""}
+        </div>
+        <div class="meta" style="color:var(--ink-2);font-size:0.8125rem">${esc(m.task)}</div></div>`;
+    }).join("");
+    h += `</fieldset>`;
+  }
+
+  if (f.notes) h += `<fieldset><legend>Notes</legend><div style="font-size:0.875rem;white-space:pre-wrap">${esc(f.notes)}</div></fieldset>`;
+
+  if (f.barrelHistory.length) {
+    h += `<fieldset><legend>Retired barrels</legend>` + f.barrelHistory.map((x) =>
+      `<div style="padding:8px 0;border-top:1px solid var(--rule-2)">
+        <b style="font-weight:550;font-size:0.875rem">${esc(x.label)}</b>
+        <span class="num" style="color:var(--ink-2);font-size:0.8125rem"> \u00b7 ${fmt(x.rounds)} rounds</span>
+        ${x.notes ? `<div style="font-size:0.8125rem;color:var(--ink-2)">${esc(x.notes)}</div>` : ""}</div>`
+    ).join("") + `</fieldset>`;
+  }
+
+  h += `<div class="btnrow" style="margin-top:4px">
+    <button class="btn sm" data-act="gun-edit" data-id="${esc(f.id)}">Edit details</button>
+    <button class="btn sm" data-act="gun-swap" data-id="${esc(f.id)}">Swap barrel</button>
+    <button class="btn sm dgr" data-act="gun-del" data-id="${esc(f.id)}">Delete</button></div>`;
+
+  openSheet(f.name, h);
+}
+
+ACT["gun-cleanbarrel"] = (id) => {
+  const f = gun(id); snapshot(`barrel clean, ${f.name}`);
+  f.barrel.sinceBarrelClean = 0; f.barrel.lastBarrelClean = today();
+  commit("Barrel clean logged."); gunSheet(id);
+};
+ACT["gun-cleandeep"] = (id) => {
+  const f = gun(id); snapshot(`deep clean, ${f.name}`);
+  f.barrel.sinceDeepClean = 0; f.barrel.lastDeepClean = today();
+  // A deep clean includes the bore.
+  f.barrel.sinceBarrelClean = 0; f.barrel.lastBarrelClean = today();
+  commit("Deep clean logged. Barrel counter reset too."); gunSheet(id);
+};
+ACT["gun-ack"] = (id, v) => {
+  const f = gun(id); snapshot(`service mark, ${f.name}`);
+  f.ackMilestones = (f.ackMilestones || []).concat([int(v)]);
+  commit("Marked done."); gunSheet(id);
+};
+
+ACT["gun-addrounds"] = (id) => {
+  const f = gun(id);
+  openSheet("Add rounds", `<p class="hint">For rounds fired outside a logged trip. This
+    bumps every counter on ${esc(f.name)} the same way a trip closeout does.</p>
+    <label class="f"><span>Rounds</span>${stepper("r", 0)}</label>
+    <label class="f"><span>Date</span><input type="date" name="d" value="${today()}"></label>
+    <button class="btn pri wide" data-act="gun-addrounds-go" data-id="${esc(id)}">Add rounds</button>`);
+};
+ACT["gun-addrounds-go"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  const r = int(v.r);
+  if (r <= 0) { toast("Enter a round count above zero."); return; }
+  const f = gun(id); snapshot(`${fmt(r)} rounds, ${f.name}`);
+  bumpGun(f, r, v.d || today());
+  commit(`${fmt(r)} rounds added to ${f.name}.`); closeSheet();
+};
+
+function bumpGun(f, rounds, date) {
+  f.receiverRounds = int(f.receiverRounds) + rounds;
+  f.barrel.rounds = int(f.barrel.rounds) + rounds;
+  f.barrel.sinceDeepClean = int(f.barrel.sinceDeepClean) + rounds;
+  f.barrel.sinceBarrelClean = int(f.barrel.sinceBarrelClean) + rounds;
+  if (date) f.lastShotDate = date;
+}
+
+ACT["gun-new"] = () => gunEdit(null);
+ACT["gun-edit"] = (id) => gunEdit(id);
+
+function gunEdit(id) {
+  const f = id ? gun(id) : {
+    name: "", serial: "", caliber: "", receiverRounds: 0, notes: "",
+    barrelCleanEvery: 500, deepCleanEvery: 1000, scheduleId: null,
+    barrel: { label: "Factory", lengthIn: null, rounds: 0, sinceDeepClean: 0, sinceBarrelClean: 0 },
+  };
+  const cals = Array.from(new Set(S.ammo.map((a) => a.caliber).concat(f.caliber ? [f.caliber] : []))).filter(Boolean);
+  openSheet(id ? "Edit " + f.name : "Add a firearm", `
+    <label class="f"><span>Name</span><input name="name" value="${esc(f.name)}" placeholder="e.g. BA 12.5"></label>
+    <div class="f2">
+      <label class="f"><span>Caliber</span><input name="caliber" value="${esc(f.caliber)}" list="callist">
+        <datalist id="callist">${cals.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
+      <label class="f"><span>Serial number</span><input name="serial" value="${esc(f.serial)}"></label>
+    </div>
+    <fieldset><legend>Counters</legend>
+      <div class="f2">
+        <label class="f"><span>Rounds through receiver</span><input type="number" name="receiverRounds" value="${int(f.receiverRounds)}"></label>
+        <label class="f"><span>Rounds on this barrel</span><input type="number" name="brounds" value="${int(f.barrel.rounds)}"></label>
+        <label class="f"><span>Since barrel clean</span><input type="number" name="sbc" value="${int(f.barrel.sinceBarrelClean)}"></label>
+        <label class="f"><span>Since deep clean</span><input type="number" name="sdc" value="${int(f.barrel.sinceDeepClean)}"></label>
+      </div></fieldset>
+    <fieldset><legend>Barrel</legend>
+      <div class="f2">
+        <label class="f"><span>Label</span><input name="blabel" value="${esc(f.barrel.label || "")}"></label>
+        <label class="f"><span>Length (in)</span><input type="number" step="0.1" name="blen" value="${f.barrel.lengthIn == null ? "" : f.barrel.lengthIn}"></label>
+      </div></fieldset>
+    <fieldset><legend>Intervals and schedule</legend>
+      <div class="f2">
+        <label class="f"><span>Barrel clean every</span><input type="number" name="barrelCleanEvery" value="${int(f.barrelCleanEvery)}"></label>
+        <label class="f"><span>Deep clean every</span><input type="number" name="deepCleanEvery" value="${int(f.deepCleanEvery)}"></label>
+      </div>
+      <label class="f"><span>Service schedule</span><select name="scheduleId">
+        <option value="">None</option>
+        ${selOpts(S.schedules, f.scheduleId, (x) => x.name)}</select></label>
+      <p class="hint" style="margin:0">Set an interval to 0 to turn that reminder off.</p>
+    </fieldset>
+    <label class="f"><span>Notes</span><textarea name="notes">${esc(f.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="gun-save" data-id="${esc(id || "")}">${id ? "Save changes" : "Add firearm"}</button>`);
+}
+
+ACT["gun-save"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.name || "").trim()) { toast("Give it a name."); return; }
+  const isNew = !id;
+  snapshot(isNew ? "add firearm" : "edit " + v.name);
+  const f = isNew ? { id: uid("f"), barrelHistory: [], ackMilestones: [], barrel: {} } : gun(id);
+  Object.assign(f, {
+    name: String(v.name).trim(), serial: v.serial || "", caliber: v.caliber || "",
+    receiverRounds: int(v.receiverRounds),
+    barrelCleanEvery: int(v.barrelCleanEvery), deepCleanEvery: int(v.deepCleanEvery),
+    scheduleId: v.scheduleId || null, notes: v.notes || "",
+  });
+  f.barrel = Object.assign(f.barrel || {}, {
+    label: v.blabel || "Factory", lengthIn: v.blen == null ? null : n(v.blen),
+    rounds: int(v.brounds), sinceBarrelClean: int(v.sbc), sinceDeepClean: int(v.sdc),
+    lastBarrelClean: (f.barrel && f.barrel.lastBarrelClean) || null,
+    lastDeepClean: (f.barrel && f.barrel.lastDeepClean) || null,
+  });
+  f.barrelHistory = f.barrelHistory || [];
+  f.ackMilestones = f.ackMilestones || [];
+  if (isNew) S.firearms.push(f);
+  commit(isNew ? "Firearm added." : "Saved."); closeSheet();
+};
+
+ACT["gun-swap"] = (id) => {
+  const f = gun(id);
+  openSheet("Swap barrel", `<p class="hint">Retires ${esc(f.barrel.label || "the current barrel")} at
+    ${fmt(f.barrel.rounds)} rounds and starts the new one at zero. Receiver total keeps counting.</p>
+    <label class="f"><span>New barrel label</span><input name="label" placeholder="e.g. 16in Faxon"></label>
+    <label class="f"><span>Length (in)</span><input type="number" step="0.1" name="len"></label>
+    <label class="f"><span>Starting rounds</span>${stepper("start", 0)}</label>
+    <label class="f"><span>Note on the retired barrel</span><input name="note" placeholder="optional"></label>
+    <button class="btn pri wide" data-act="gun-swap-go" data-id="${esc(id)}">Swap barrel</button>`);
+};
+ACT["gun-swap-go"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.label || "").trim()) { toast("Name the new barrel."); return; }
+  const f = gun(id); snapshot("barrel swap, " + f.name);
+  f.barrelHistory.push({
+    label: f.barrel.label || "Previous barrel", lengthIn: f.barrel.lengthIn,
+    rounds: int(f.barrel.rounds), retiredOn: today(), notes: v.note || "",
+  });
+  f.barrel = {
+    label: String(v.label).trim(), lengthIn: v.len == null ? null : n(v.len),
+    rounds: int(v.start), sinceBarrelClean: int(v.start), sinceDeepClean: int(v.start),
+    lastBarrelClean: null, lastDeepClean: null,
+  };
+  commit("Barrel swapped."); closeSheet();
+};
+
+ACT["gun-del"] = (id) => {
+  const f = gun(id);
+  if (!confirm(`Delete ${f.name} and its counters? Trip history keeps the name but loses the link.`)) return;
+  snapshot("delete " + f.name);
+  S.firearms = S.firearms.filter((x) => x.id !== id);
+  commit("Deleted."); closeSheet();
+};
+</script>
+<script>
+"use strict";
+
+/* ============================================================ AMMO ====== */
+RENDER.ammo = function () {
+  let h = `<section class="blk"><h2>Ammunition
+    <button class="btn sm" data-act="ammo-new">Add</button></h2>`;
+  if (!S.ammo.length) return h + emptyState("Nothing on the shelf", "Add a line for each caliber, brand and bullet weight you keep.", "Add ammunition", "ammo-new") + `</section>`;
+
+  const boxed = S.ammo.reduce((t, a) => t + int(a.qtyBoxed), 0);
+  const loose = S.ammo.reduce((t, a) => t + int(a.qtyLoose), 0);
+  const inMags = S.magLoads.reduce((t, l) => t + int(l.rounds), 0);
+  h += `<div class="card"><div class="counter"><span class="big">${fmt(boxed + loose + inMags)}</span>
+    <span class="unit">rounds total</span></div>
+    <div class="split-nums">
+      <div><span>Boxed</span><b>${fmt(boxed)}</b></div>
+      <div><span>Loose</span><b>${fmt(loose)}</b></div>
+      <div><span>In mags</span><b>${fmt(inMags)}</b></div>
+      <div><span>Lines</span><b>${fmt(S.ammo.length)}</b></div>
+    </div></div>`;
+  if (AR_CALS.some((c) => calibers().includes(c))) {
+    h += `<div class="card" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
+      <div><b style="font-weight:600">AR combined</b>
+      <div class="hint" style="margin:0">.223 and 5.56 pooled, as the sheet had it</div></div>
+      <span class="num" style="font-size:1.375rem;font-weight:550">${fmt(arTotal())}</span></div>`;
+  }
+  h += `</section>`;
+
+  h += `<section class="blk"><div class="rows">`;
+  calibers().forEach((cal) => {
+    const lines = S.ammo.filter((a) => a.caliber === cal);
+    h += `<div class="grouphead"><span>${esc(cal)}</span><span class="num">${fmt(caliberTotal(cal))}</span></div>`;
+    h += lines.map((a) => {
+      const ld = loadedFor(a.id);
+      const bits = [];
+      if (int(a.qtyBoxed)) bits.push(`${fmt(a.qtyBoxed)} boxed`);
+      if (int(a.qtyLoose)) bits.push(`${fmt(a.qtyLoose)} loose`);
+      if (ld) bits.push(`${fmt(ld)} in mags`);
+      return `<button class="row" data-act="ammo-open" data-id="${esc(a.id)}">
+        <span class="grow"><span class="ttl">${esc(ammoLabel(a))}</span>
+        <span class="meta">${bits.length ? esc(bits.join(" \u00b7 ")) : "empty"}${a.notes ? " \u00b7 note" : ""}</span></span>
+        <span class="num" style="font-weight:550">${fmt(onHand(a))}</span>
+        <span class="chev">&rsaquo;</span></button>`;
+    }).join("");
+  });
+  h += `</div></section>`;
+  return h;
+};
+
+ACT["ammo-open"] = (id) => ammoSheet(id);
+
+function ammoSheet(id) {
+  const a = ammoOf(id);
+  if (!a) return;
+  const ld = S.magLoads.filter((l) => l.ammoId === id);
+  let h = "";
+  if (a.notes) h += `<div class="note flag">${esc(a.notes)}</div>`;
+  h += `<div class="card"><div class="counter"><span class="big">${fmt(onHand(a))}</span>
+    <span class="unit">rounds of ${esc(a.caliber)}</span></div>
+    <div class="split-nums">
+      <div><span>Boxed</span><b>${fmt(a.qtyBoxed)}</b></div>
+      <div><span>Loose</span><b>${fmt(a.qtyLoose)}</b></div>
+      <div><span>In mags</span><b>${fmt(loadedFor(a.id))}</b></div>
+      <div><span>Mags</span><b>${fmt(ld.length)}</b></div>
+    </div>
+    ${a.location ? `<p class="hint" style="margin:10px 0 0">Kept in ${esc(a.location)}</p>` : ""}</div>
+
+  <div class="btnrow split" style="margin:12px 0">
+    <button class="btn" data-act="ammo-stock" data-id="${esc(id)}">Add or remove</button>
+    <button class="btn pri" data-act="mag-load" data-id="${esc(id)}">Load magazines</button>
+  </div>`;
+
+  if (ld.length) {
+    h += `<fieldset><legend>Loaded into</legend>` + ld.map((l) => {
+      const m = magType(l.magTypeId);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--rule-2)">
+        <span style="flex:1;min-width:0">
+          <b style="font-weight:550;font-size:0.875rem">${esc(magLabel(m))}</b>
+          ${l.notes ? `<div class="hint" style="margin:0">${esc(l.notes)}</div>` : ""}</span>
+        <span class="num">${fmt(l.rounds)}</span>
+        <button class="btn sm" data-act="mag-unload" data-id="${esc(l.id)}">Unload</button></div>`;
+    }).join("") + `</fieldset>`;
+  }
+
+  const v = vstats((S.velocity.find((x) => x.ammoId === id) || {}).shots);
+  if (v) h += `<fieldset><legend>Measured velocity</legend>
+    <dl><div class="kv"><dt>Average</dt><dd>${Math.round(v.avg)} fps</dd></div>
+    <div class="kv"><dt>SD</dt><dd>${v.sd.toFixed(1)}</dd></div></dl></fieldset>`;
+
+  h += `<div class="btnrow"><button class="btn sm" data-act="ammo-edit" data-id="${esc(id)}">Edit details</button>
+    <button class="btn sm dgr" data-act="ammo-del" data-id="${esc(id)}">Delete</button></div>`;
+  openSheet(ammoFull(a), h);
+}
+
+ACT["ammo-stock"] = (id) => {
+  const a = ammoOf(id);
+  openSheet("Adjust " + ammoLabel(a), `
+    <p class="hint">Positive adds, negative removes. Rounds already in magazines are
+      not touched here \u2014 unload a magazine to move them back.</p>
+    <div class="f2">
+      <label class="f"><span>Boxed (now ${fmt(a.qtyBoxed)})</span><input type="number" name="b" value="0"></label>
+      <label class="f"><span>Loose (now ${fmt(a.qtyLoose)})</span><input type="number" name="l" value="0"></label>
+    </div>
+    <label class="f"><span>Reason</span><input name="why" placeholder="bought a case, recount, gave some away"></label>
+    <button class="btn pri wide" data-act="ammo-stock-go" data-id="${esc(id)}">Apply</button>`);
+};
+ACT["ammo-stock-go"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  const db = int(v.b), dl = int(v.l);
+  if (!db && !dl) { toast("Nothing to change."); return; }
+  const a = ammoOf(id);
+  if (int(a.qtyBoxed) + db < 0 || int(a.qtyLoose) + dl < 0) {
+    toast("That would take a count below zero."); return;
+  }
+  snapshot("stock change, " + ammoLabel(a));
+  a.qtyBoxed = int(a.qtyBoxed) + db;
+  a.qtyLoose = int(a.qtyLoose) + dl;
+  if (a.notes && /Clamped to 0/.test(a.notes)) a.notes = "";
+  S.ledger.push({ id: uid("lg"), at: today(), kind: "stock", ammoId: id,
+    boxed: db, loose: dl, why: v.why || "" });
+  commit("Stock updated."); closeSheet();
+};
+
+ACT["ammo-new"] = () => ammoEdit(null);
+ACT["ammo-edit"] = (id) => ammoEdit(id);
+
+function ammoEdit(id) {
+  const a = id ? ammoOf(id) : { caliber: "", brand: "", type: "", grains: null,
+    qtyBoxed: 0, qtyLoose: 0, location: "", notes: "", ref10G: null };
+  const cals = Array.from(new Set(S.ammo.map((x) => x.caliber))).filter(Boolean);
+  openSheet(id ? "Edit line" : "Add ammunition", `
+    <div class="f2">
+      <label class="f"><span>Caliber</span><input name="caliber" value="${esc(a.caliber)}" list="acal">
+        <datalist id="acal">${cals.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
+      <label class="f"><span>Brand</span><input name="brand" value="${esc(a.brand)}"></label>
+      <label class="f"><span>Bullet type</span><input name="type" value="${esc(a.type)}" placeholder="FMJ, OTM, HPBT"></label>
+      <label class="f"><span>Weight (gr)</span><input type="number" name="grains" value="${a.grains == null ? "" : a.grains}"></label>
+    </div>
+    <fieldset><legend>Counts</legend><div class="f2">
+      <label class="f"><span>Boxed</span><input type="number" name="qtyBoxed" value="${int(a.qtyBoxed)}"></label>
+      <label class="f"><span>Loose</span><input type="number" name="qtyLoose" value="${int(a.qtyLoose)}"></label>
+    </div></fieldset>
+    <label class="f"><span>Where it lives</span><input name="location" value="${esc(a.location || "")}" placeholder="bang box, ammo can 2, safe"></label>
+    <label class="f"><span>Weight of 10 rounds (g)</span><input type="number" step="0.1" name="ref10G" value="${a.ref10G == null ? "" : a.ref10G}">
+      </label><p class="hint" style="margin:-6px 0 12px">Used by the weight counter. Weigh ten and enter the grams.</p>
+    <label class="f"><span>Notes</span><textarea name="notes">${esc(a.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="ammo-save" data-id="${esc(id || "")}">${id ? "Save changes" : "Add line"}</button>`);
+}
+
+ACT["ammo-save"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.brand || "").trim() || !String(v.caliber || "").trim()) {
+    toast("Caliber and brand are both needed."); return;
+  }
+  const isNew = !id;
+  snapshot(isNew ? "add ammo line" : "edit " + v.brand);
+  const a = isNew ? { id: uid("a") } : ammoOf(id);
+  Object.assign(a, {
+    caliber: String(v.caliber).trim(), brand: String(v.brand).trim(),
+    type: v.type || "", grains: v.grains == null ? null : n(v.grains),
+    qtyBoxed: int(v.qtyBoxed), qtyLoose: int(v.qtyLoose),
+    location: v.location || "", notes: v.notes || "",
+    ref10G: v.ref10G == null ? null : n(v.ref10G),
+  });
+  if (isNew) S.ammo.push(a);
+  commit(isNew ? "Line added." : "Saved."); closeSheet();
+};
+
+ACT["ammo-del"] = (id) => {
+  const a = ammoOf(id);
+  const ld = S.magLoads.filter((l) => l.ammoId === id);
+  if (ld.length && !confirm(`${ammoLabel(a)} is loaded into ${plural(ld.length, "magazine")}. Delete the line and those loads?`)) return;
+  if (!ld.length && !confirm(`Delete ${ammoLabel(a)}?`)) return;
+  snapshot("delete " + ammoLabel(a));
+  S.ammo = S.ammo.filter((x) => x.id !== id);
+  S.magLoads = S.magLoads.filter((l) => l.ammoId !== id);
+  commit("Deleted."); closeSheet();
+};
+
+/* ============================================================ MAGS ====== */
+RENDER.mags = function () {
+  const loaded = S.magLoads.slice().sort((a, b) => int(b.rounds) - int(a.rounds));
+  const onTrip = magsOnTrip();
+  let h = `<section class="blk"><h2>Loaded now
+    <button class="btn sm" data-act="mag-load">Load</button></h2>`;
+  if (!loaded.length) {
+    h += emptyState("No magazines loaded", "Loading moves rounds out of boxed or loose and into a magazine.", "Load magazines", "mag-load");
+  } else {
+    const tot = loaded.reduce((t, l) => t + int(l.rounds), 0);
+    h += `<p class="hint">${plural(loaded.length, "magazine")} holding ${fmt(tot)} rounds.</p>`;
+    const cals = [];
+    loaded.forEach((l) => {
+      const a = ammoOf(l.ammoId);
+      const c = a ? a.caliber : "Unknown";
+      if (!cals.includes(c)) cals.push(c);
+    });
+    h += `<div class="rows">`;
+    cals.forEach((c) => {
+      const items = loaded.filter((l) => {
+        const a = ammoOf(l.ammoId);
+        return (a ? a.caliber : "Unknown") === c;
+      });
+      h += `<div class="grouphead"><span>${esc(c)}</span>
+        <span class="num">${fmt(items.reduce((t, l) => t + int(l.rounds), 0))}</span></div>`;
+      h += items.map((l) => {
+        const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
+        const packed = onTrip.has(l.id);
+        return `<button class="row" data-act="mag-loadopen" data-id="${esc(l.id)}">
+          <span class="grow"><span class="ttl">${esc(magLabel(m))}</span>
+          <span class="meta">${esc(a ? ammoLabel(a) : "ammo line missing")}</span></span>
+          ${packed ? `<span class="tag">packed</span>` : ""}
+          ${m ? "" : `<span class="tag flag">no type</span>`}
+          <span class="num" style="font-weight:550">${fmt(l.rounds)}</span>
+          <span class="chev">&rsaquo;</span></button>`;
+      }).join("");
+    });
+    h += `</div>`;
+    const noType = loaded.filter((l) => !l.magTypeId);
+    if (noType.length) h += `<p class="hint" style="margin-top:8px">${plural(noType.length, "block")}
+      of rounds came across from the spreadsheet with no magazine type. Open one to split it
+      into real magazines.</p>`;
+  }
+  h += `</section>`;
+
+  h += `<section class="blk"><h2>Owned
+    <button class="btn sm" data-act="magtype-new">Add type</button></h2>`;
+  if (!S.magTypes.length) {
+    h += emptyState("No magazine types", "Add each type you own with its capacity and how many you have.", "Add a type", "magtype-new");
+  } else {
+    const groups = [];
+    S.magTypes.forEach((m) => { if (!groups.includes(m.group)) groups.push(m.group); });
+    h += `<div class="rows">`;
+    groups.forEach((g) => {
+      const items = S.magTypes.filter((m) => m.group === g);
+      const own = items.reduce((t, m) => t + int(m.quantity), 0);
+      h += `<div class="grouphead"><span>${esc(g || "Ungrouped")}</span>
+        <span class="num">${fmt(own)} owned</span></div>`;
+      h += items.map((m) => {
+        const used = magsInUse(m.id), free = magsFree(m);
+        return `<button class="row" data-act="magtype-open" data-id="${esc(m.id)}">
+          <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity ? ` <span class="num" style="color:var(--ink-2);font-weight:400">${m.capacity}rd</span>` : ""}</span>
+          <span class="meta">${fmt(free)} free of ${fmt(m.quantity)}${used ? ` \u00b7 ${fmt(used)} loaded` : ""}${m.capacity ? "" : " \u00b7 no capacity set"}</span></span>
+          <span class="chev">&rsaquo;</span></button>`;
+      }).join("");
+    });
+    h += `</div>`;
+  }
+  h += `</section>`;
+  return h;
+};
+
+/* ---- loading: the loose/boxed -> magazine migration ---- */
+ACT["mag-load"] = (ammoId) => {
+  if (!S.ammo.length) { toast("Add an ammunition line first."); return; }
+  const a = ammoId ? ammoOf(ammoId) : S.ammo[0];
+  magLoadForm(a.id);
+};
+
+function magLoadForm(ammoId) {
+  const a = ammoOf(ammoId);
+  const avail = S.magTypes.filter((m) => magsFree(m) > 0);
+  const pool = avail.filter((m) => m.group === a.caliber);
+  const list = pool.length ? pool : avail;
+  const def = list[0];
+  openSheet("Load magazines", `
+    <label class="f"><span>Ammunition</span>
+      <select name="ammoId" data-act-change="mag-load-reload">${selOptsGrouped(
+        S.ammo, a.id, ammoLabel, (x) => x.caliber)}</select></label>
+    <p class="hint" style="margin:-4px 0 12px">${fmt(a.qtyBoxed)} boxed, ${fmt(a.qtyLoose)} loose available.</p>
+    ${list.length ? `
+    <label class="f"><span>Magazine type</span>
+      <select name="magTypeId" data-act-change="mag-cap">${selOpts(list, def ? def.id : "",
+        (m) => `${m.label}${m.capacity ? " " + m.capacity + "rd" : ""} \u2014 ${magsFree(m)} free`)}</select></label>
+    <div class="f2">
+      <label class="f"><span>Rounds in each</span>${stepper("each", def && def.capacity ? def.capacity : 30, 1)}</label>
+      <label class="f"><span>How many magazines</span>${stepper("count", 1, 1)}</label>
+    </div>
+    <label class="f"><span>Take rounds from</span><select name="src">
+      <option value="loose">Loose (${fmt(a.qtyLoose)})</option>
+      <option value="boxed">Boxed (${fmt(a.qtyBoxed)})</option></select></label>
+    <button class="btn pri wide" data-act="mag-load-go">Load magazines</button>`
+    : `<div class="note flag">Every magazine you own is already loaded. Unload one first,
+        or raise a quantity under Owned.</div>`}`);
+}
+
+/* Default a fresh magazine to its full capacity when the type changes. */
+ACT["mag-cap"] = () => {
+  const v = readForm($("#sheetbody"));
+  const m = magType(v.magTypeId);
+  const inp = $('input[name="each"]', $("#sheetbody"));
+  if (m && m.capacity && inp) inp.value = m.capacity;
+};
+
+ACT["mag-load-reload"] = () => {
+  const v = readForm($("#sheetbody"));
+  magLoadForm(v.ammoId);
+};
+
+ACT["mag-load-go"] = () => {
+  const v = readForm($("#sheetbody"));
+  const a = ammoOf(v.ammoId), m = magType(v.magTypeId);
+  const each = int(v.each), count = int(v.count);
+  if (!a || !m) { toast("Pick an ammunition line and a magazine type."); return; }
+  if (each <= 0 || count <= 0) { toast("Rounds and magazine count must be above zero."); return; }
+  if (count > magsFree(m)) { toast(`Only ${fmt(magsFree(m))} ${m.label} free.`); return; }
+  if (m.capacity && each > m.capacity) { toast(`A ${m.label} holds ${m.capacity}.`); return; }
+  const need = each * count;
+  const have = v.src === "boxed" ? int(a.qtyBoxed) : int(a.qtyLoose);
+  if (need > have) { toast(`That needs ${fmt(need)} but only ${fmt(have)} are ${v.src}.`); return; }
+
+  snapshot(`load ${count}\u00d7 ${m.label}`);
+  if (v.src === "boxed") a.qtyBoxed = int(a.qtyBoxed) - need;
+  else a.qtyLoose = int(a.qtyLoose) - need;
+  for (let i = 0; i < count; i++) {
+    S.magLoads.push({ id: uid("ml"), magTypeId: m.id, ammoId: a.id,
+      rounds: each, loadedOn: today(), notes: "" });
+  }
+  commit(`${plural(count, "magazine")} loaded with ${fmt(need)} rounds.`);
+  closeSheet();
+};
+
+ACT["mag-loadopen"] = (id) => {
+  const l = byId(S.magLoads, id);
+  if (!l) return;
+  const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
+  const packed = magsOnTrip().has(l.id);
+  const free = S.magTypes.filter((x) => magsFree(x) > 0 || x.id === l.magTypeId);
+  openSheet(magLabel(m), `
+    ${packed ? `<div class="note">This magazine is packed for the open trip. Changing it
+      here will not match what you carried.</div>` : ""}
+    ${l.notes ? `<div class="note">${esc(l.notes)}</div>` : ""}
+    <dl class="card"><div class="kv"><dt>Ammunition</dt><dd style="font-family:var(--sans)">${esc(a ? ammoFull(a) : "missing")}</dd></div>
+      <div class="kv"><dt>Rounds</dt><dd>${fmt(l.rounds)}</dd></div>
+      <div class="kv"><dt>Loaded on</dt><dd>${esc(dshow(l.loadedOn))}</dd></div></dl>
+    <label class="f" style="margin-top:12px"><span>Correct the round count</span>${stepper("rounds", l.rounds, 0)}</label>
+    <label class="f"><span>Magazine type</span><select name="magTypeId">
+      <option value="">Unassigned</option>${selOpts(free, l.magTypeId, magLabel)}</select></label>
+    <div class="btnrow split" style="margin-top:8px">
+      <button class="btn" data-act="mag-loadsave" data-id="${esc(id)}">Save</button>
+      <button class="btn ${l.magTypeId ? "pri" : ""}" data-act="mag-unload" data-id="${esc(id)}">Unload</button></div>
+    <button class="btn ${l.magTypeId ? "" : "pri"} wide" style="margin-top:8px"
+      data-act="mag-split" data-id="${esc(id)}">Split into separate magazines</button>`);
+};
+
+ACT["mag-loadsave"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  const l = byId(S.magLoads, id);
+  const m = v.magTypeId ? magType(v.magTypeId) : null;
+  if (m && m.capacity && int(v.rounds) > m.capacity) { toast(`A ${m.label} holds ${m.capacity}.`); return; }
+  snapshot("edit loaded magazine");
+  l.rounds = int(v.rounds);
+  l.magTypeId = v.magTypeId || null;
+  if (l.rounds === 0) S.magLoads = S.magLoads.filter((x) => x.id !== id);
+  commit("Saved."); closeSheet();
+};
+
+ACT["mag-unload"] = (id) => {
+  const l = byId(S.magLoads, id);
+  const a = ammoOf(l.ammoId);
+  openSheet("Unload magazine", `<p class="hint">Moves ${fmt(l.rounds)} rounds of
+    ${esc(a ? ammoLabel(a) : "this ammunition")} back into stock and frees the magazine.</p>
+    <label class="f"><span>Put the rounds back as</span><select name="dest">
+      <option value="loose">Loose</option><option value="boxed">Boxed</option></select></label>
+    <button class="btn pri wide" data-act="mag-unload-go" data-id="${esc(id)}">Unload</button>`);
+};
+ACT["mag-unload-go"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  const l = byId(S.magLoads, id);
+  const a = ammoOf(l.ammoId);
+  snapshot("unload magazine");
+  if (a) {
+    if (v.dest === "boxed") a.qtyBoxed = int(a.qtyBoxed) + int(l.rounds);
+    else a.qtyLoose = int(a.qtyLoose) + int(l.rounds);
+  }
+  S.magLoads = S.magLoads.filter((x) => x.id !== id);
+  commit(`${fmt(l.rounds)} rounds back in stock.`); closeSheet();
+};
+
+/* Break one block of loaded rounds into individual magazines of a chosen type.
+   This is how the spreadsheet's bare "loaded" figures become real magazines. */
+ACT["mag-split"] = (id) => {
+  const l = byId(S.magLoads, id);
+  if (!l) return;
+  const a = ammoOf(l.ammoId);
+  const cal = a ? a.caliber : "";
+  let pool = S.magTypes.filter((m) => magsFree(m) > 0 && m.group === cal);
+  if (!pool.length) pool = S.magTypes.filter((m) => magsFree(m) > 0);
+  if (!pool.length) {
+    openSheet("No free magazines", `<div class="note flag">Every magazine you own is
+      already loaded, so there is nothing to split these ${fmt(l.rounds)} rounds into.
+      Raise a quantity under Owned first.</div>
+      <button class="btn wide" data-act="sheet-close">Close</button>`);
+    return;
+  }
+  const def = pool[0];
+  openSheet("Split into magazines", `
+    <p class="hint">${fmt(l.rounds)} rounds of ${esc(a ? ammoLabel(a) : "this ammunition")}
+      ${l.magTypeId ? `currently recorded as one ${esc(magLabel(magType(l.magTypeId)))}` : "with no magazine type"}.
+      Pick a type and how many rounds go in each.</p>
+    <label class="f"><span>Magazine type</span>
+      <select name="magTypeId" data-act-change="mag-split-preview">${selOptsGrouped(
+        pool, def.id, (m) => `${m.label}${m.capacity ? " " + m.capacity + "rd" : ""} \u2014 ${magsFree(m)} free`,
+        (m) => m.group || "Other")}</select></label>
+    <label class="f"><span>Rounds in each</span>${stepper("each", def.capacity || 30, 1)}</label>
+    <div id="splitprev"></div>
+    <button class="btn pri wide" style="margin-top:4px" data-act="mag-split-go" data-id="${esc(id)}">Split</button>`,
+    () => splitPreview(id));
+};
+
+function splitPreview(id) {
+  const l = byId(S.magLoads, id);
+  const v = readForm($("#sheetbody"));
+  const m = magType(v.magTypeId);
+  const each = int(v.each);
+  const box = $("#splitprev");
+  if (!box || !m || each <= 0) return;
+  const full = Math.floor(int(l.rounds) / each);
+  const rem = int(l.rounds) % each;
+  const need = full + (rem ? 1 : 0);
+  const free = magsFree(m) + (l.magTypeId === m.id ? 1 : 0);
+  const overCap = m.capacity && each > m.capacity;
+  box.innerHTML = overCap
+    ? `<div class="note flag">A ${esc(m.label)} holds ${m.capacity} rounds.</div>`
+    : need > free
+      ? `<div class="note flag">That needs ${plural(need, "magazine")} but only
+         ${fmt(free)} ${esc(m.label)} ${free === 1 ? "is" : "are"} free.</div>`
+      : `<div class="note">${plural(full, "magazine")} of ${fmt(each)}${rem
+          ? `, plus one holding ${fmt(rem)}` : ""}. ${plural(need, "magazine")} used of
+          ${fmt(free)} free.</div>`;
+}
+
+ACT["mag-split-preview"] = () => {
+  const btn = $('[data-act="mag-split-go"]', $("#sheetbody"));
+  const m = magType(readForm($("#sheetbody")).magTypeId);
+  const inp = $('input[name="each"]', $("#sheetbody"));
+  if (m && m.capacity && inp) inp.value = m.capacity;
+  if (btn) splitPreview(btn.dataset.id);
+};
+
+ACT["mag-split-go"] = (id) => {
+  const l = byId(S.magLoads, id);
+  const v = readForm($("#sheetbody"));
+  const m = magType(v.magTypeId);
+  const each = int(v.each);
+  if (!m || each <= 0) { toast("Pick a type and a round count."); return; }
+  if (m.capacity && each > m.capacity) { toast(`A ${m.label} holds ${m.capacity}.`); return; }
+  const full = Math.floor(int(l.rounds) / each);
+  const rem = int(l.rounds) % each;
+  const need = full + (rem ? 1 : 0);
+  const free = magsFree(m) + (l.magTypeId === m.id ? 1 : 0);
+  if (!need) { toast("Fewer rounds than one magazine holds."); return; }
+  if (need > free) { toast(`Needs ${plural(need, "magazine")}, only ${fmt(free)} free.`); return; }
+
+  snapshot(`split ${fmt(l.rounds)} rounds into ${m.label}`);
+  const made = [];
+  for (let i = 0; i < full; i++) made.push(each);
+  if (rem) made.push(rem);
+  made.forEach((r) => S.magLoads.push({
+    id: uid("ml"), magTypeId: m.id, ammoId: l.ammoId,
+    rounds: r, loadedOn: l.loadedOn || null, notes: "",
+  }));
+  S.magLoads = S.magLoads.filter((x) => x.id !== id);
+  commit(`Split into ${plural(made.length, "magazine")}.`); closeSheet();
+};
+
+/* ---- magazine types ---- */
+ACT["magtype-new"] = () => magTypeEdit(null);
+ACT["magtype-open"] = (id) => magTypeEdit(id);
+
+function magTypeEdit(id) {
+  const m = id ? magType(id) : { group: "", label: "", capacity: null, quantity: 1, notes: "" };
+  const groups = Array.from(new Set(S.magTypes.map((x) => x.group))).filter(Boolean);
+  const used = id ? magsInUse(id) : 0;
+  openSheet(id ? m.label : "Add magazine type", `
+    ${m.notes ? `<div class="note">${esc(m.notes)}</div>` : ""}
+    ${used ? `<p class="hint">${plural(used, "magazine")} of this type currently loaded.</p>` : ""}
+    <div class="f2">
+      <label class="f"><span>Fits</span><input name="group" value="${esc(m.group || "")}" list="mgrp" placeholder="5.56, 9mm, MP5">
+        <datalist id="mgrp">${groups.map((g) => `<option value="${esc(g)}">`).join("")}</datalist></label>
+      <label class="f"><span>Name</span><input name="label" value="${esc(m.label)}" placeholder="Pmag Gen3"></label>
+      <label class="f"><span>Capacity</span><input type="number" name="capacity" value="${m.capacity == null ? "" : m.capacity}"></label>
+      <label class="f"><span>How many owned</span><input type="number" name="quantity" value="${int(m.quantity)}"></label>
+    </div>
+    <button class="btn pri wide" data-act="magtype-save" data-id="${esc(id || "")}">${id ? "Save changes" : "Add type"}</button>
+    ${id ? `<button class="btn dgr wide" style="margin-top:8px" data-act="magtype-del" data-id="${esc(id)}">Delete type</button>` : ""}`);
+}
+
+ACT["magtype-save"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.label || "").trim()) { toast("Name the magazine."); return; }
+  const used = id ? magsInUse(id) : 0;
+  if (int(v.quantity) < used) { toast(`${plural(used, "magazine")} of these are loaded. Unload first.`); return; }
+  const isNew = !id;
+  snapshot(isNew ? "add magazine type" : "edit " + v.label);
+  const m = isNew ? { id: uid("m") } : magType(id);
+  Object.assign(m, {
+    group: v.group || "", label: String(v.label).trim(),
+    capacity: v.capacity == null ? null : int(v.capacity),
+    quantity: int(v.quantity), notes: v.capacity ? "" : (m.notes || ""),
+  });
+  if (isNew) S.magTypes.push(m);
+  commit(isNew ? "Type added." : "Saved."); closeSheet();
+};
+
+ACT["magtype-del"] = (id) => {
+  const m = magType(id);
+  if (magsInUse(id)) { toast("Unload these magazines before deleting the type."); return; }
+  if (!confirm(`Delete ${m.label}?`)) return;
+  snapshot("delete " + m.label);
+  S.magTypes = S.magTypes.filter((x) => x.id !== id);
+  commit("Deleted."); closeSheet();
+};
+</script>
+<script>
+"use strict";
+let RANGEMODE = "trip";
+
+/* ============================================================ RANGE ===== */
+RENDER.range = function () {
+  const t = openTrip();
+  if (!t) return rangeIdle();
+  return RANGEMODE === "closeout" ? rangeCloseout(t) : rangePacking(t);
+};
+
+function rangeIdle() {
+  let h = `<section class="blk"><h2>Range trips</h2>
+    <p class="hint">Start a trip, pack what you are taking, then log what came back.
+      The difference is what you fired, and everything updates in one step.</p>
+    <button class="btn pri wide" data-act="trip-new">Start a trip</button></section>`;
+  const closed = S.trips.filter((x) => x.status === "closed")
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (closed.length) {
+    h += `<section class="blk"><h2>History</h2><div class="rows">` + closed.map((t) => {
+      const fired = t.entries.reduce((s, e) => s + tripEntryFired(e).total, 0);
+      const guns = new Set(t.entries.map((e) => e.firearmId)).size;
+      return `<button class="row" data-act="trip-open" data-id="${esc(t.id)}">
+        <span class="grow"><span class="ttl">${esc(t.location || "Range trip")}</span>
+        <span class="meta">${esc(t.date)} \u00b7 ${plural(guns, "firearm")}</span></span>
+        <span class="num" style="font-weight:550">${fmt(fired)}</span>
+        <span class="chev">&rsaquo;</span></button>`;
+    }).join("") + `</div>
+    <p class="hint" style="margin-top:8px">Numbers shown are rounds fired.</p></section>`;
+  }
+  return h;
+}
+
+/* ---------------- packing ---------------- */
+function rangePacking(t) {
+  const packed = t.entries.reduce((s, e) => s + tripBrought(e), 0);
+  let h = `<section class="blk"><div class="card" style="border-color:var(--brass)">
+    <h2>${esc(t.location || "Range trip")}</h2>
+    <p class="hint" style="margin:3px 0 0">${esc(t.date)} \u00b7 packing</p>
+    <div class="counter" style="margin-top:8px"><span class="big">${fmt(packed)}</span>
+      <span class="unit">rounds packed</span></div>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn sm" data-act="trip-edit" data-id="${esc(t.id)}">Edit trip</button>
+      <button class="btn sm dgr" data-act="trip-cancel" data-id="${esc(t.id)}">Cancel trip</button>
+    </div></div></section>`;
+
+  h += `<section class="blk"><h2>What you are taking
+    <button class="btn sm" data-act="entry-new">Add</button></h2>`;
+  if (!t.entries.length) {
+    h += emptyState("Nothing packed", "Add a line for each firearm and ammunition pairing you are bringing.", "Add a line", "entry-new");
+  } else {
+    h += `<div class="rows">` + t.entries.map((e) => {
+      const f = gun(e.firearmId), a = ammoOf(e.ammoId);
+      const bits = [];
+      if (int(e.broughtBoxed)) bits.push(`${fmt(e.broughtBoxed)} boxed`);
+      if (int(e.broughtLoose)) bits.push(`${fmt(e.broughtLoose)} loose`);
+      if ((e.mags || []).length) bits.push(`${plural(e.mags.length, "mag")}`);
+      return `<button class="row" data-act="entry-open" data-id="${esc(e.id)}">
+        <span class="grow"><span class="ttl">${esc(f ? f.name : "Firearm missing")}</span>
+        <span class="meta">${esc(a ? ammoLabel(a) : "ammo missing")}${bits.length ? " \u00b7 " + esc(bits.join(", ")) : " \u00b7 nothing yet"}</span></span>
+        <span class="num" style="font-weight:550">${fmt(tripBrought(e))}</span>
+        <span class="chev">&rsaquo;</span></button>`;
+    }).join("") + `</div>`;
+  }
+  h += `</section>`;
+
+  if (t.entries.length) {
+    h += `<section class="blk"><button class="btn pri wide" data-act="trip-closeout">Log what came back</button></section>`;
+  }
+  return h;
+}
+
+ACT["go-range"] = () => { RANGEMODE = "trip"; go("range"); };
+
+ACT["trip-new"] = () => {
+  openSheet("Start a range trip", `
+    <label class="f"><span>Date</span><input type="date" name="date" value="${today()}"></label>
+    <label class="f"><span>Where</span><input name="location" placeholder="public land, club, indoor"></label>
+    <label class="f"><span>Notes</span><textarea name="notes" placeholder="weather, what you were working on"></textarea></label>
+    <button class="btn pri wide" data-act="trip-new-go">Start trip</button>`);
+};
+ACT["trip-new-go"] = () => {
+  const v = readForm($("#sheetbody"));
+  snapshot("start trip");
+  S.trips.push({ id: uid("t"), date: v.date || today(), location: v.location || "",
+    notes: v.notes || "", status: "open", entries: [] });
+  RANGEMODE = "trip";
+  commit("Trip started. Pack what you are taking."); closeSheet();
+};
+
+ACT["trip-edit"] = (id) => {
+  const t = byId(S.trips, id);
+  openSheet("Edit trip", `
+    <label class="f"><span>Date</span><input type="date" name="date" value="${esc(t.date)}"></label>
+    <label class="f"><span>Where</span><input name="location" value="${esc(t.location || "")}"></label>
+    <label class="f"><span>Notes</span><textarea name="notes">${esc(t.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="trip-edit-go" data-id="${esc(id)}">Save</button>`);
+};
+ACT["trip-edit-go"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  const t = byId(S.trips, id);
+  snapshot("edit trip");
+  t.date = v.date || t.date; t.location = v.location || ""; t.notes = v.notes || "";
+  commit("Saved."); closeSheet();
+};
+
+ACT["trip-cancel"] = (id) => {
+  if (!confirm("Cancel this trip? Nothing has been deducted yet, so your counts stay as they are.")) return;
+  snapshot("cancel trip");
+  S.trips = S.trips.filter((x) => x.id !== id);
+  commit("Trip cancelled.");
+};
+
+/* ---------------- packing a line ---------------- */
+ACT["entry-new"] = () => entryForm(null);
+ACT["entry-open"] = (id) => entryForm(id);
+
+let EDIT_ENTRY = null;
+
+/* Magazines already loaded with this ammunition, minus any packed on another line. */
+function entryCandidates(entryId, ammoId) {
+  const t = openTrip();
+  const e = entryId ? byId(t.entries, entryId) : null;
+  const taken = magsOnTrip();
+  (e && e.mags || []).forEach((g) => taken.delete(g.magLoadId));
+  return S.magLoads.filter((l) => l.ammoId === ammoId && !taken.has(l.id));
+}
+
+/* Group identical magazines together so packing is "4 of these" rather than
+   ticking four indistinguishable boxes. A partly used magazine has a different
+   round count, so it forms its own group and stays visible. */
+function magBuckets(candidates) {
+  const map = new Map();
+  candidates.forEach((l) => {
+    const k = (l.magTypeId || "none") + ":" + int(l.rounds);
+    if (!map.has(k)) map.set(k, { key: k, magTypeId: l.magTypeId || null, rounds: int(l.rounds), loads: [] });
+    map.get(k).loads.push(l.id);
+  });
+  const arr = Array.from(map.values());
+  arr.sort((a, b) => {
+    const la = a.magTypeId ? magLabel(magType(a.magTypeId)) : "\uffff";
+    const lb = b.magTypeId ? magLabel(magType(b.magTypeId)) : "\uffff";
+    return la.localeCompare(lb) || b.rounds - a.rounds;
+  });
+  return arr;
+}
+
+function entryForm(entryId, override) {
+  const t = openTrip();
+  if (!S.firearms.length || !S.ammo.length) { toast("Add a firearm and an ammunition line first."); return; }
+  EDIT_ENTRY = entryId || null;
+  const e = entryId ? byId(t.entries, entryId) : null;
+  const base = override || (e
+    ? { firearmId: e.firearmId, ammoId: e.ammoId,
+        broughtBoxed: int(e.broughtBoxed), broughtLoose: int(e.broughtLoose),
+        chosen: (e.mags || []).map((g) => g.magLoadId) }
+    : { firearmId: S.firearms[0].id, ammoId: null, broughtBoxed: 0, broughtLoose: 0, chosen: [] });
+
+  const f = gun(base.firearmId);
+  const cal = f ? f.caliber : "";
+  let pool = AR_CALS.includes(cal)
+    ? S.ammo.filter((a) => AR_CALS.includes(a.caliber))
+    : S.ammo.filter((a) => a.caliber === cal);
+  if (!pool.length) pool = S.ammo;
+  let aid = base.ammoId;
+  if (!pool.some((a) => a.id === aid)) aid = pool[0] && pool[0].id;
+  const a = ammoOf(aid);
+
+  const buckets = magBuckets(entryCandidates(entryId, aid));
+  const chosen = new Set(base.chosen || []);
+  const packedRounds = buckets.reduce((sum, b) => {
+    const k = b.loads.filter((x) => chosen.has(x)).length;
+    return sum + k * b.rounds;
+  }, 0);
+
+  openSheet(entryId ? "Edit line" : "Add a line", `
+    <label class="f"><span>Firearm</span>
+      <select name="firearmId" data-act-change="entry-reload">${selOptsGrouped(
+        S.firearms, base.firearmId, (x) => x.name, (x) => x.caliber || "Caliber not set")}</select></label>
+    <label class="f"><span>Ammunition</span>
+      <select name="ammoId" data-act-change="entry-reload">${selOptsGrouped(
+        pool, aid, ammoLabel, (x) => x.caliber)}</select></label>
+    <p class="hint" style="margin:-4px 0 12px">${a ? `${fmt(a.qtyBoxed)} boxed, ${fmt(a.qtyLoose)} loose on the shelf.` : ""}</p>
+
+    <fieldset><legend>Loose and boxed to bring</legend><div class="f2">
+      <label class="f"><span>Boxed</span>${stepper("broughtBoxed", base.broughtBoxed)}</label>
+      <label class="f"><span>Loose</span>${stepper("broughtLoose", base.broughtLoose)}</label>
+    </div></fieldset>
+
+    <fieldset><legend>Loaded magazines to bring${packedRounds ? ` \u2014 ${fmt(packedRounds)} rounds` : ""}</legend>
+      ${buckets.length ? buckets.map((b) => {
+        const m = b.magTypeId ? magType(b.magTypeId) : null;
+        const sel = b.loads.filter((x) => chosen.has(x)).length;
+        return `<div class="bucket">
+          <div class="top">
+            <b>${esc(m ? magLabel(m) : "Unassigned magazines")}</b>
+            <span class="avail">${fmt(b.rounds)} rounds each</span>
+          </div>
+          <div class="ctl">
+            ${stepper("bk_" + b.key, sel, 0)}
+            <span class="of">of ${plural(b.loads.length, "mag")} loaded</span>
+          </div>
+          ${m ? "" : `<div class="hint" style="margin:6px 0 0">Carried over from the
+            spreadsheet with no magazine type. <button class="linkbtn"
+            data-act="mag-split" data-id="${esc(b.loads[0])}">Split into real magazines</button></div>`}
+        </div>`;
+      }).join("") : `<p class="hint" style="margin:0">No magazines are loaded with this ammunition.
+        Load some from the Mags tab, or just bring boxed and loose rounds.</p>`}
+    </fieldset>
+
+    <button class="btn pri wide" data-act="entry-save" data-id="${esc(entryId || "")}">${entryId ? "Save line" : "Add line"}</button>
+    ${entryId ? `<button class="btn dgr wide" style="margin-top:8px" data-act="entry-del" data-id="${esc(entryId)}">Remove line</button>` : ""}`);
+}
+
+/* Turn the bucket counts back into specific magazine records. */
+function readChosenMags(entryId, ammoId, v) {
+  const out = [];
+  magBuckets(entryCandidates(entryId, ammoId)).forEach((b) => {
+    const want = Math.min(int(v["bk_" + b.key]), b.loads.length);
+    for (let i = 0; i < want; i++) out.push(b.loads[i]);
+  });
+  return out;
+}
+
+ACT["entry-reload"] = () => {
+  const v = readForm($("#sheetbody"));
+  entryForm(EDIT_ENTRY, {
+    firearmId: v.firearmId, ammoId: v.ammoId,
+    broughtBoxed: int(v.broughtBoxed), broughtLoose: int(v.broughtLoose),
+    chosen: readChosenMags(EDIT_ENTRY, v.ammoId, v),
+  });
+};
+
+ACT["entry-save"] = (entryId) => {
+  const t = openTrip();
+  const v = readForm($("#sheetbody"));
+  const mags = readChosenMags(entryId || null, v.ammoId, v)
+    .map((mlid) => {
+      const l = byId(S.magLoads, mlid);
+      return l ? { magLoadId: l.id, magTypeId: l.magTypeId,
+        roundsOut: int(l.rounds), roundsBack: int(l.rounds) } : null;
+    }).filter(Boolean);
+
+  if (!int(v.broughtBoxed) && !int(v.broughtLoose) && !mags.length) {
+    toast("Bring something: boxed, loose, or a loaded magazine."); return;
+  }
+  const a = ammoOf(v.ammoId);
+  if (int(v.broughtBoxed) > int(a.qtyBoxed)) { toast(`Only ${fmt(a.qtyBoxed)} boxed on the shelf.`); return; }
+  if (int(v.broughtLoose) > int(a.qtyLoose)) { toast(`Only ${fmt(a.qtyLoose)} loose on the shelf.`); return; }
+
+  snapshot(entryId ? "edit packing line" : "pack a line");
+  const e = entryId ? byId(t.entries, entryId) : { id: uid("e") };
+  Object.assign(e, {
+    firearmId: v.firearmId, ammoId: v.ammoId,
+    broughtBoxed: int(v.broughtBoxed), broughtLoose: int(v.broughtLoose),
+    returnedBoxed: Math.min(e.returnedBoxed == null ? int(v.broughtBoxed) : int(e.returnedBoxed), int(v.broughtBoxed)),
+    returnedLoose: Math.min(e.returnedLoose == null ? int(v.broughtLoose) : int(e.returnedLoose), int(v.broughtLoose)),
+    mags,
+  });
+  if (!entryId) t.entries.push(e);
+  commit(entryId ? "Line saved." : `Line packed: ${fmt(tripBrought(e))} rounds.`); closeSheet();
+};
+
+ACT["entry-del"] = (entryId) => {
+  const t = openTrip();
+  snapshot("remove packing line");
+  t.entries = t.entries.filter((x) => x.id !== entryId);
+  commit("Line removed."); closeSheet();
+};
+
+/* ---------------- closeout ---------------- */
+ACT["trip-closeout"] = () => {
+  const t = openTrip();
+  if (!t) { toast("No trip is open."); return; }
+  if (!t.entries.length) { toast("Pack at least one line first."); return; }
+  RANGEMODE = "closeout"; go("range");
+};
+ACT["closeout-back"] = () => { RANGEMODE = "trip"; render(); };
+
+function rangeCloseout(t) {
+  const grand = t.entries.reduce((s, e) => s + tripEntryFired(e).total, 0);
+  let h = `<section class="blk"><div class="card">
+    <h2>What came back</h2>
+    <p class="hint" style="margin:3px 0 0">${esc(t.location || "Range trip")} &middot; ${esc(t.date)}</p>
+    <div class="counter" style="margin-top:8px"><span class="big" id="grandfired">${fmt(grand)}</span>
+      <span class="unit">rounds fired</span></div>
+    <p class="hint" style="margin:10px 0 0">Enter what you brought home. Everything left over
+      counts as fired and gets deducted when you close out.</p>
+    </div></section>`;
+
+  h += t.entries.map((e) => {
+    const f = gun(e.firearmId), a = ammoOf(e.ammoId);
+    const fd = tripEntryFired(e);
+    return `<section class="blk"><div class="card">
+      <h3>${esc(f ? f.name : "Firearm missing")}</h3>
+      <p class="hint" style="margin:2px 0 12px">${esc(a ? ammoFull(a) : "ammo missing")}
+        &middot; packed ${fmt(tripBrought(e))}</p>
+
+      ${(int(e.broughtBoxed) || int(e.broughtLoose)) ? `<div class="f2">
+        ${int(e.broughtBoxed) ? `<label class="f"><span>Boxed back (took ${fmt(e.broughtBoxed)})</span>
+          <input type="number" inputmode="numeric" data-e="${esc(e.id)}" data-k="returnedBoxed"
+            value="${int(e.returnedBoxed)}" min="0"></label>` : ""}
+        ${int(e.broughtLoose) ? `<label class="f"><span>Loose back (took ${fmt(e.broughtLoose)})</span>
+          <input type="number" inputmode="numeric" data-e="${esc(e.id)}" data-k="returnedLoose"
+            value="${int(e.returnedLoose)}" min="0"></label>` : ""}
+      </div>` : ""}
+
+      ${(e.mags || []).length ? `<fieldset><legend>Rounds left in each magazine</legend>
+        ${e.mags.map((g, i) => {
+          const m = magType(g.magTypeId);
+          return `<div style="padding:10px 0;border-top:1px solid var(--rule-2)">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+              <b style="font-weight:550;font-size:0.875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(magLabel(m))}</b>
+              <span class="num" style="color:var(--ink-2);font-size:0.75rem;flex:none">took ${fmt(g.roundsOut)}</span>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:7px">
+              <button class="btn sm" data-act="co-set" data-id="${esc(e.id)}" data-v="${i}:0">Empty</button>
+              <button class="btn sm" data-act="co-set" data-id="${esc(e.id)}" data-v="${i}:full">Untouched</button>
+              <input type="number" inputmode="numeric" style="flex:1;min-width:64px;text-align:center;min-height:34px;padding:4px 8px"
+                data-e="${esc(e.id)}" data-mag="${i}" value="${int(g.roundsBack)}" min="0" max="${int(g.roundsOut)}"
+                aria-label="Rounds left in ${esc(magLabel(m))}">
+            </div></div>`;
+        }).join("")}
+        <div class="btnrow" style="margin-top:10px">
+          <button class="btn sm" data-act="co-all" data-id="${esc(e.id)}" data-v="0">All empty</button>
+          <button class="btn sm" data-act="co-all" data-id="${esc(e.id)}" data-v="full">All untouched</button>
+        </div></fieldset>` : ""}
+
+      <div class="split-nums" id="fired-${esc(e.id)}">
+        <div><span>From mags</span><b>${fmt(fd.mags)}</b></div>
+        <div><span>Loose/boxed</span><b>${fmt(fd.loose)}</b></div>
+        <div><span>Fired</span><b>${fmt(fd.total)}</b></div>
+        <div><span>New total</span><b>${fmt(int(f ? f.receiverRounds : 0) + fd.total)}</b></div>
+      </div>
+    </div></section>`;
+  }).join("");
+
+  h += `<section class="blk">
+    <button class="btn pri wide" data-act="closeout-go">Close out trip</button>
+    <button class="btn wide" style="margin-top:8px" data-act="closeout-back">Back to packing</button>
+    <p class="hint" style="margin-top:10px">Closing out deducts fired rounds from stock, updates
+      each magazine, and adds the rounds to every counter on the firearms involved. One tap of
+      undo reverses all of it.</p></section>`;
+  return h;
+}
+
+ACT["co-set"] = (entryId, v) => {
+  const t = openTrip(); const e = byId(t.entries, entryId);
+  const [i, what] = String(v).split(":");
+  const g = e.mags[int(i)];
+  g.roundsBack = what === "full" ? int(g.roundsOut) : 0;
+  save(); render();
+};
+ACT["co-all"] = (entryId, v) => {
+  const t = openTrip(); const e = byId(t.entries, entryId);
+  e.mags.forEach((g) => { g.roundsBack = v === "full" ? int(g.roundsOut) : 0; });
+  save(); render();
+};
+
+/* live edits during closeout, without redrawing the field being typed in */
+let coSaveT = null;
+function coEdit(el) {
+  const t = openTrip(); if (!t) return;
+  const e = byId(t.entries, el.dataset.e); if (!e) return;
+  if (el.dataset.mag != null) {
+    const g = e.mags[int(el.dataset.mag)];
+    let val = int(el.value);
+    if (val > int(g.roundsOut)) { val = int(g.roundsOut); el.value = val; }
+    if (val < 0) { val = 0; el.value = 0; }
+    g.roundsBack = val;
+  } else {
+    const k = el.dataset.k;
+    const cap = k === "returnedBoxed" ? int(e.broughtBoxed) : int(e.broughtLoose);
+    let val = int(el.value);
+    if (val < 0) { val = 0; el.value = 0; }
+    if (val > cap) { val = cap; el.value = cap; }
+    e[k] = val;
+  }
+  const fd = tripEntryFired(e);
+  const f = gun(e.firearmId);
+  const box = $("#fired-" + e.id);
+  if (box) {
+    const bs = $$("b", box);
+    bs[0].textContent = fmt(fd.mags);
+    bs[1].textContent = fmt(fd.loose);
+    bs[2].textContent = fmt(fd.total);
+    bs[3].textContent = fmt(int(f ? f.receiverRounds : 0) + fd.total);
+  }
+  const g = $("#grandfired");
+  if (g) g.textContent = fmt(t.entries.reduce((s, x) => s + tripEntryFired(x).total, 0));
+  DIRTY = true;
+  clearTimeout(coSaveT);
+  coSaveT = setTimeout(save, 500);
+}
+
+/* The transaction. Everything the spreadsheet did with four manual pastes. */
+ACT["closeout-go"] = () => {
+  const t = openTrip();
+  if (!t) return;
+
+  // Validate before touching anything.
+  const problems = [];
+  const dBoxed = {}, dLoose = {};
+  t.entries.forEach((e) => {
+    const a = ammoOf(e.ammoId), f = gun(e.firearmId);
+    if (!a) { problems.push("An ammunition line on this trip has been deleted."); return; }
+    if (!f) { problems.push("A firearm on this trip has been deleted."); return; }
+    dBoxed[a.id] = (dBoxed[a.id] || 0) + int(e.broughtBoxed) - int(e.returnedBoxed);
+    dLoose[a.id] = (dLoose[a.id] || 0) + int(e.broughtLoose) - int(e.returnedLoose);
+  });
+  Object.keys(dBoxed).forEach((id) => {
+    const a = ammoOf(id);
+    if (int(a.qtyBoxed) - dBoxed[id] < 0)
+      problems.push(`${ammoLabel(a)}: boxed would go below zero. Check the boxed figures.`);
+    if (int(a.qtyLoose) - dLoose[id] < 0)
+      problems.push(`${ammoLabel(a)}: loose would go below zero. Check the loose figures.`);
+  });
+  if (problems.length) {
+    openSheet("Cannot close out yet", `<div class="note flag">${problems.map(esc).join("<br><br>")}</div>
+      <button class="btn wide" data-act="sheet-close">Go back and fix</button>`);
+    return;
+  }
+
+  const fired = t.entries.reduce((s, e) => s + tripEntryFired(e).total, 0);
+  if (!confirm(`Close out with ${fmt(fired)} rounds fired? Stock, magazines and round counts all update.`)) return;
+
+  snapshot(`closeout, ${t.location || t.date}`);
+
+  t.entries.forEach((e) => {
+    const a = ammoOf(e.ammoId), f = gun(e.firearmId);
+    const fd = tripEntryFired(e);
+    a.qtyBoxed = int(a.qtyBoxed) - (int(e.broughtBoxed) - int(e.returnedBoxed));
+    a.qtyLoose = int(a.qtyLoose) - (int(e.broughtLoose) - int(e.returnedLoose));
+    (e.mags || []).forEach((g) => {
+      const l = byId(S.magLoads, g.magLoadId);
+      if (!l) return;
+      if (int(g.roundsBack) <= 0) S.magLoads = S.magLoads.filter((x) => x.id !== l.id);
+      else l.rounds = int(g.roundsBack);
+    });
+    bumpGun(f, fd.total, t.date);
+    e.firedTotal = fd.total; e.firedMags = fd.mags; e.firedLoose = fd.loose;
+  });
+
+  t.status = "closed";
+  t.closedAt = new Date().toISOString();
+  t.firedTotal = fired;
+  RANGEMODE = "trip";
+  save(); render();
+  toast(`Trip closed. ${fmt(fired)} rounds logged.`, "Undo", undoLast);
+};
+
+ACT["trip-open"] = (id) => {
+  const t = byId(S.trips, id);
+  if (!t) return;
+  let h = `<dl class="card">
+    <div class="kv"><dt>Date</dt><dd style="font-family:var(--sans)">${esc(t.date)}</dd></div>
+    <div class="kv"><dt>Rounds fired</dt><dd>${fmt(t.firedTotal || 0)}</dd></div>
+    <div class="kv"><dt>Lines</dt><dd>${fmt(t.entries.length)}</dd></div></dl>`;
+  if (t.notes) h += `<div class="note" style="margin-top:12px">${esc(t.notes)}</div>`;
+  h += `<fieldset style="margin-top:12px"><legend>Detail</legend>` + t.entries.map((e) => {
+    const f = gun(e.firearmId), a = ammoOf(e.ammoId);
+    return `<div style="padding:9px 0;border-top:1px solid var(--rule-2)">
+      <b style="font-weight:550;font-size:0.9375rem">${esc(f ? f.name : "Firearm removed")}</b>
+      <span class="num" style="float:right;font-weight:550">${fmt(e.firedTotal || 0)}</span>
+      <div class="hint" style="margin:0">${esc(a ? ammoLabel(a) : "ammo removed")}
+        &middot; ${fmt(e.firedMags || 0)} from mags, ${fmt(e.firedLoose || 0)} loose or boxed</div></div>`;
+  }).join("") + `</fieldset>`;
+  openSheet(t.location || "Range trip", h);
+};
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   OneDrive sync.
+
+   The whole log is one JSON file in this app's own OneDrive folder
+   (Apps/Armory/armory.json). The app cannot see anything else in your drive.
+
+   Auth is OAuth 2.0 authorization code flow with PKCE, spoken directly to
+   the consumer endpoint. No MSAL: the library is around 200 KB from a CDN,
+   which would break the promise that this app opens with no network.
+
+   Conflicts are never resolved silently. Each save bumps a revision counter,
+   and the copy on OneDrive carries the revision it was written at. If the
+   remote revision moved on while this device also had unsaved changes, the
+   app stops and asks.
+   ========================================================================== */
+
+const CID_KEY = "armory.clientId";
+const TOK_KEY = "armory.tokens";
+const SYNC_KEY = "armory.sync";
+const PKCE_KEY = "armory.pkce";
+const AUTH_BASE = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
+const GRAPH = "https://graph.microsoft.com/v1.0";
+const SCOPES = "openid profile offline_access Files.ReadWrite.AppFolder";
+const REMOTE_FILE = "armory.json";
+const ITEM = `${GRAPH}/me/drive/special/approot:/${REMOTE_FILE}`;
+
+let SYNCING = false;
+let PUSH_T = null;
+let CONFLICT = null;   // { local, remote, eTag }
+let LAST_CHECK = 0;
+
+/* ------------------------------------------------------------- small io */
+function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+const clientId = () => { try { return localStorage.getItem(CID_KEY) || ""; } catch (e) { return ""; } };
+const redirectUri = () => location.origin + location.pathname;
+const canSync = () => location.protocol === "https:" || location.hostname === "localhost";
+
+function syncMeta() { return lsGet(SYNC_KEY) || {}; }
+function setSyncMeta(patch) { lsSet(SYNC_KEY, Object.assign(syncMeta(), patch)); }
+function syncErr(msg) { setSyncMeta({ error: msg || null, at: Date.now() }); }
+
+/* Local edits exist that OneDrive has not seen. */
+function dirty() { return int(S.rev) !== int(syncMeta().rev); }
+function linked() { return !!lsGet(TOK_KEY); }
+
+/* Only a starting guess; the name is editable and stays on this device. Requires
+   both a coarse pointer and a plausible screen size, since either alone misfires. */
+function defaultDeviceName() {
+  const short = (screen && screen.width && screen.height)
+    ? Math.min(screen.width, screen.height) : 0;
+  const coarse = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
+  if (coarse && short && short < 500) return "Phone";
+  if (coarse && short && short < 900) return "Tablet";
+  return "Computer";
+}
+
+/* ------------------------------------------------------------- PKCE */
+function b64url(buf) {
+  let s = "";
+  new Uint8Array(buf).forEach((b) => { s += String.fromCharCode(b); });
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function randStr(bytes) {
+  const a = new Uint8Array(bytes);
+  crypto.getRandomValues(a);
+  return b64url(a);
+}
+async function challengeFor(verifier) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return b64url(d);
+}
+
+async function signIn() {
+  if (!canSync()) { toast("Sync needs the app served over https."); return; }
+  if (!clientId()) { toast("Add your client ID first."); return; }
+  const verifier = randStr(48), state = randStr(12);
+  lsSet(PKCE_KEY, { verifier, state });
+  const u = new URL(AUTH_BASE + "/authorize");
+  const p = {
+    client_id: clientId(), response_type: "code", redirect_uri: redirectUri(),
+    scope: SCOPES, code_challenge: await challengeFor(verifier),
+    code_challenge_method: "S256", state, prompt: "select_account",
+  };
+  Object.keys(p).forEach((k) => u.searchParams.set(k, p[k]));
+  location.assign(u.toString());
+}
+
+async function tokenRequest(extra) {
+  const body = new URLSearchParams(Object.assign({ client_id: clientId() }, extra));
+  const res = await fetch(AUTH_BASE + "/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error_description || j.error || "Sign-in failed.");
+  const prev = lsGet(TOK_KEY) || {};
+  const tok = {
+    access: j.access_token,
+    refresh: j.refresh_token || prev.refresh,
+    exp: Date.now() + (int(j.expires_in) || 3600) * 1000,
+    who: prev.who || null,
+  };
+  if (j.id_token) {
+    try {
+      const claims = JSON.parse(atob(j.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      tok.who = claims.preferred_username || claims.email || claims.name || null;
+    } catch (e) {}
+  }
+  lsSet(TOK_KEY, tok);
+  return tok;
+}
+
+function cleanUrl() {
+  try { history.replaceState({}, "", redirectUri()); } catch (e) {}
+}
+
+/* Handle the redirect back from Microsoft. Returns true if we just linked. */
+async function handleAuthRedirect() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("error")) {
+    syncErr(q.get("error_description") || q.get("error"));
+    cleanUrl();
+    return false;
+  }
+  const code = q.get("code");
+  if (!code) return false;
+  const pk = lsGet(PKCE_KEY);
+  const state = q.get("state");
+  cleanUrl();
+  lsDel(PKCE_KEY);
+  if (!pk || state !== pk.state) { syncErr("Sign-in did not match this device. Try again."); return false; }
+  try {
+    await tokenRequest({
+      grant_type: "authorization_code", code,
+      redirect_uri: redirectUri(), code_verifier: pk.verifier,
+    });
+    syncErr(null);
+    return true;
+  } catch (e) { syncErr(e.message); return false; }
+}
+
+/* A single-page app's refresh token is fixed at 24 hours and cannot be
+   extended, so an expired one is normal rather than an error. */
+async function accessToken() {
+  const t = lsGet(TOK_KEY);
+  if (!t) return null;
+  if (t.exp - Date.now() > 60000) return t.access;
+  if (!t.refresh) { syncErr("Sign-in expired. Connect again to resume syncing."); return null; }
+  try {
+    const nt = await tokenRequest({ grant_type: "refresh_token", refresh_token: t.refresh, scope: SCOPES });
+    syncErr(null);
+    return nt.access;
+  } catch (e) {
+    lsDel(TOK_KEY);
+    syncErr("Sign-in expired. Connect again to resume syncing.");
+    return null;
+  }
+}
+
+function signOut() {
+  lsDel(TOK_KEY); lsDel(SYNC_KEY); lsDel(PKCE_KEY);
+  CONFLICT = null;
+  toast("Disconnected. Your log stays on this device.");
+  render();
+}
+
+/* ------------------------------------------------------------- graph */
+async function graph(url, opts) {
+  const tok = await accessToken();
+  if (!tok) return { needsAuth: true };
+  const o = Object.assign({ headers: {} }, opts || {});
+  o.headers = Object.assign({ Authorization: "Bearer " + tok }, o.headers);
+  const res = await fetch(url, o);
+  return { res, status: res.status, ok: res.ok };
+}
+
+async function remoteMeta() {
+  const r = await graph(ITEM);
+  if (r.needsAuth) return r;
+  if (r.status === 404) return { absent: true };
+  if (!r.ok) return { error: `OneDrive returned ${r.status}.` };
+  const j = await r.res.json();
+  return { eTag: j.eTag, modified: j.lastModifiedDateTime, size: j.size };
+}
+
+async function remoteRead() {
+  const r = await graph(ITEM + ":/content");
+  if (r.needsAuth) return r;
+  if (r.status === 404) return { absent: true };
+  if (!r.ok) return { error: `Could not read from OneDrive (${r.status}).` };
+  try { return { state: await r.res.json() }; }
+  catch (e) { return { error: "The file in OneDrive is not readable as a backup." }; }
+}
+
+async function remoteWrite(force) {
+  S.updatedAt = new Date().toISOString();
+  S.deviceName = S.deviceName || defaultDeviceName();
+  const headers = { "Content-Type": "application/json" };
+  const known = syncMeta().eTag;
+  if (known && !force) headers["if-match"] = known;
+  const r = await graph(ITEM + ":/content", {
+    method: "PUT", headers, body: JSON.stringify(S),
+  });
+  if (r.needsAuth) return r;
+  if (r.status === 412 || r.status === 409) return { stale: true };
+  if (!r.ok) return { error: `Could not write to OneDrive (${r.status}).` };
+  const j = await r.res.json().catch(() => ({}));
+  return { eTag: j.eTag };
+}
+
+/* ------------------------------------------------------------- engine */
+function adoptRemote(st, eTag) {
+  const mine = S.deviceName;
+  S = migrate(st);
+  S.deviceName = mine || S.deviceName;   // device name is per device, not synced
+  save({ noRev: true });
+  setSyncMeta({ eTag, rev: int(S.rev), pulled: Date.now(), error: null });
+}
+
+async function syncNow(interactive, retry) {
+  if (!canSync() || !clientId() || !linked() || CONFLICT) {
+    if (interactive && CONFLICT) openConflict();
+    return "skipped";
+  }
+  if (SYNCING) return "busy";
+  SYNCING = true;
+  if (interactive) render();
+  try {
+    const meta = await remoteMeta();
+    if (meta.needsAuth) return "auth";
+    if (meta.error) { syncErr(meta.error); return "error"; }
+
+    /* Nothing on OneDrive yet. */
+    if (meta.absent) {
+      const w = await remoteWrite(true);
+      if (w.needsAuth) return "auth";
+      if (w.error) { syncErr(w.error); return "error"; }
+      setSyncMeta({ eTag: w.eTag, rev: int(S.rev), pushed: Date.now(), error: null });
+      return "pushed";
+    }
+
+    const known = syncMeta().eTag;
+    const remoteMoved = meta.eTag !== known;
+
+    if (remoteMoved) {
+      const rr = await remoteRead();
+      if (rr.needsAuth) return "auth";
+      if (rr.error) { syncErr(rr.error); return "error"; }
+      if (rr.absent) return "error";
+
+      if (!dirty()) {
+        adoptRemote(rr.state, meta.eTag);
+        render();
+        return "pulled";
+      }
+      /* Both sides moved. Never guess which one wins. */
+      CONFLICT = { local: S, remote: rr.state, eTag: meta.eTag };
+      syncErr(null);
+      render();
+      if (interactive) openConflict();
+      else toast("Two devices both changed the log.", "Review", openConflict);
+      return "conflict";
+    }
+
+    if (!dirty()) { setSyncMeta({ checked: Date.now(), error: null }); return "current"; }
+
+    const w = await remoteWrite(false);
+    if (w.needsAuth) return "auth";
+    if (w.stale) {
+      /* Someone wrote between our check and our write. Look again once. */
+      if (retry) {
+        const rr = await remoteRead();
+        CONFLICT = { local: S, remote: rr.state || null, eTag: null };
+        render();
+        if (interactive) openConflict();
+        return "conflict";
+      }
+      SYNCING = false;
+      return syncNow(interactive, true);
+    }
+    if (w.error) { syncErr(w.error); return "error"; }
+    setSyncMeta({ eTag: w.eTag, rev: int(S.rev), pushed: Date.now(), error: null });
+    return "pushed";
+  } catch (e) {
+    syncErr(navigator.onLine === false
+      ? "No connection. Your changes are saved here and will sync later."
+      : (e.message || "Sync failed."));
+    return "error";
+  } finally {
+    SYNCING = false;
+    LAST_CHECK = Date.now();
+    if (interactive) render();
+  }
+}
+
+/* Called from save() on every change that alters the log. */
+function queuePush() {
+  if (!linked() || CONFLICT) return;
+  clearTimeout(PUSH_T);
+  PUSH_T = setTimeout(() => { syncNow(false); }, 2500);
+}
+
+ACT["sync-now"] = () => { syncNow(true).then((r) => {
+  const said = { pushed: "Pushed to OneDrive.", pulled: "Pulled the newer copy.",
+    current: "Already up to date.", auth: "Connect again to resume syncing.",
+    conflict: "Two versions need a decision." }[r];
+  if (said) toast(said);
+}); };
+ACT["sync-in"] = () => signIn();
+ACT["sync-out"] = () => { if (confirm("Disconnect OneDrive? The log stays on this device.")) signOut(); };
+
+ACT["sync-cid"] = () => {
+  const v = readForm($("#sheetbody"));
+  const id = String(v.cid || "").trim();
+  if (!/^[0-9a-f-]{30,40}$/i.test(id)) { toast("That does not look like a client ID."); return; }
+  try { localStorage.setItem(CID_KEY, id); } catch (e) {}
+  toast("Client ID saved. Now connect OneDrive.");
+  closeSheet(); render();
+};
+
+ACT["sync-setup"] = () => {
+  openSheet("Register the app once", `
+    <p class="hint">Ten minutes, once, on the computer. Nothing here costs anything and
+      there is no secret to rotate afterwards.</p>
+    <ol style="padding-left:20px;font-size:0.9375rem;line-height:1.5">
+      <li style="margin-bottom:9px">Open <b>entra.microsoft.com</b> and sign in with your
+        personal Microsoft account.</li>
+      <li style="margin-bottom:9px">Go to <b>App registrations</b>, then
+        <b>New registration</b>.</li>
+      <li style="margin-bottom:9px">Name it <b>Armory</b>. For supported account types pick
+        <b>Personal Microsoft accounts only</b>.</li>
+      <li style="margin-bottom:9px">Under Redirect URI choose platform
+        <b>Single-page application (SPA)</b> and paste exactly this:
+        <div class="mono-list" style="word-break:break-all;background:var(--card);
+          border:1px solid var(--rule);border-radius:7px;padding:8px;margin-top:5px;color:var(--ink)">${esc(redirectUri())}</div>
+        <span class="hint">SPA matters. Any other platform type and the browser will be
+        refused at the token step.</span></li>
+      <li style="margin-bottom:9px">Register, then copy the <b>Application (client) ID</b>
+        from the overview page.</li>
+      <li style="margin-bottom:9px">Go to <b>API permissions</b>, add a Microsoft Graph
+        <b>delegated</b> permission, and pick
+        <b>Files.ReadWrite.AppFolder</b>. That scope confines the app to its own folder and
+        gives it no view of the rest of your OneDrive.</li>
+      <li>Paste the client ID below.</li>
+    </ol>
+    <label class="f" style="margin-top:14px"><span>Application (client) ID</span>
+      <input name="cid" value="${esc(clientId())}" placeholder="00000000-0000-0000-0000-000000000000"
+        autocapitalize="off" spellcheck="false"></label>
+    <button class="btn pri wide" data-act="sync-cid">Save client ID</button>`);
+};
+
+ACT["sync-name"] = () => {
+  openSheet("Name this device", `
+    <p class="hint">Shown when two devices disagree, so you can tell which copy is which.
+      The name stays on this device and is not synced.</p>
+    <label class="f"><span>Device name</span><input name="dn"
+      value="${esc(S.deviceName || defaultDeviceName())}" placeholder="Phone"></label>
+    <button class="btn pri wide" data-act="sync-name-go">Save</button>`);
+};
+ACT["sync-name-go"] = () => {
+  const v = readForm($("#sheetbody"));
+  S.deviceName = String(v.dn || "").trim() || defaultDeviceName();
+  save({ noRev: true });
+  closeSheet(); render(); toast("Device named.");
+};
+
+/* ------------------------------------------------------------- conflict */
+function summarise(st) {
+  if (!st) return null;
+  const rounds = (st.ammo || []).reduce((t, a) =>
+    t + int(a.qtyBoxed) + int(a.qtyLoose), 0)
+    + (st.magLoads || []).reduce((t, l) => t + int(l.rounds), 0);
+  return {
+    device: st.deviceName || "Unnamed device",
+    when: st.updatedAt ? st.updatedAt.slice(0, 16).replace("T", " ") : "unknown",
+    rev: int(st.rev),
+    firearms: (st.firearms || []).length,
+    rounds,
+    trips: (st.trips || []).filter((t) => t.status === "closed").length,
+    fired: (st.firearms || []).reduce((t, f) => t + int(f.receiverRounds), 0),
+  };
+}
+
+function conflictCard(title, s, tag) {
+  if (!s) return `<div class="card"><h3>${esc(title)}</h3>
+    <p class="hint" style="margin:4px 0 0">Could not be read.</p></div>`;
+  return `<div class="card"><h3>${esc(title)} <span class="tag ${tag}">${esc(s.device)}</span></h3>
+    <p class="hint" style="margin:4px 0 0">Saved ${esc(s.when)} &middot; revision ${fmt(s.rev)}</p>
+    <div class="split-nums">
+      <div><span>Firearms</span><b>${fmt(s.firearms)}</b></div>
+      <div><span>Rounds</span><b>${fmt(s.rounds)}</b></div>
+      <div><span>Trips</span><b>${fmt(s.trips)}</b></div>
+      <div><span>Fired</span><b>${fmt(s.fired)}</b></div>
+    </div></div>`;
+}
+
+function openConflict() {
+  if (!CONFLICT) return;
+  const a = summarise(CONFLICT.local), b = summarise(CONFLICT.remote);
+  openSheet("Two versions to choose from", `
+    <div class="note flag">This device and OneDrive both changed since the last sync.
+      Merging them automatically would silently drop one set of changes, so pick one.
+      Export both first if you are unsure.</div>
+    ${conflictCard("On this device", a, "")}
+    <div style="height:10px"></div>
+    ${conflictCard("On OneDrive", b, "mute")}
+    <div class="btnrow" style="margin-top:14px;flex-direction:column">
+      <button class="btn pri wide" data-act="conflict-local">Keep this device and overwrite OneDrive</button>
+      <button class="btn wide" style="margin-top:8px" data-act="conflict-remote">Take the OneDrive copy and discard local changes</button>
+      <button class="btn wide" style="margin-top:8px" data-act="conflict-export">Export both as files first</button>
+    </div>`);
+}
+
+ACT["conflict-open"] = () => openConflict();
+
+ACT["conflict-local"] = async () => {
+  if (!CONFLICT) return;
+  if (!confirm("Overwrite the OneDrive copy with this device's version?")) return;
+  CONFLICT = null;
+  closeSheet();
+  const w = await remoteWrite(true);
+  if (w.error || w.needsAuth) { syncErr(w.error || "Sign-in expired."); render(); return; }
+  setSyncMeta({ eTag: w.eTag, rev: int(S.rev), pushed: Date.now(), error: null });
+  render(); toast("OneDrive now matches this device.");
+};
+
+ACT["conflict-remote"] = () => {
+  if (!CONFLICT || !CONFLICT.remote) return;
+  if (!confirm("Discard this device's changes and take the OneDrive copy?")) return;
+  snapshot("take the OneDrive copy");
+  const { remote, eTag } = CONFLICT;
+  CONFLICT = null;
+  closeSheet();
+  adoptRemote(remote, eTag);
+  render(); toast("Took the OneDrive copy. Undo is available.");
+};
+
+ACT["conflict-export"] = () => {
+  if (!CONFLICT) return;
+  download(`armory-thisdevice-${today()}.json`, JSON.stringify(CONFLICT.local, null, 1));
+  if (CONFLICT.remote) {
+    setTimeout(() => download(`armory-onedrive-${today()}.json`,
+      JSON.stringify(CONFLICT.remote, null, 1)), 600);
+  }
+  toast("Both versions exported. Now pick one.");
+};
+
+/* ------------------------------------------------------------- panels */
+function syncLine() {
+  if (CONFLICT) {
+    return `<section class="blk"><div class="card" style="border-color:var(--flag)">
+      <h2>Sync needs a decision</h2>
+      <p class="hint" style="margin:5px 0 11px">This device and OneDrive both changed.
+        Nothing has been overwritten.</p>
+      <button class="btn pri wide" data-act="conflict-open">Compare the two versions</button>
+    </div></section>`;
+  }
+  if (!linked()) return "";
+  const m = syncMeta();
+  const when = m.pushed || m.pulled || m.checked;
+  const label = SYNCING ? "Syncing"
+    : m.error ? m.error
+    : dirty() ? "Changes waiting to sync"
+    : when ? "Synced " + agoText(when) : "Connected";
+  return `<section class="blk"><button class="btn wide" data-act="sync-now"
+    style="justify-content:space-between">
+    <span style="font-weight:500;color:${m.error ? "var(--flag)" : "var(--ink-2)"};
+      font-size:0.875rem;text-align:left">${esc(label)}</span>
+    <span style="color:var(--brass)">${SYNCING ? "" : "Sync now"}</span></button></section>`;
+}
+
+function agoText(ts) {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+
+function syncPanel() {
+  let h = `<section class="blk"><h2>OneDrive sync</h2>`;
+  if (!canSync()) {
+    h += `<div class="note">Sync needs the app served over https, because the sign-in
+      redirect cannot come back to a local file. Host the files and open that address
+      instead, then this section will come alive. Export and import still work here.</div>`;
+    return h + `</section>`;
+  }
+  if (!clientId()) {
+    h += `<p class="hint">Keeps this device and your others in step through a single file
+      in your own OneDrive, in a folder only this app can see. Free, and there is no
+      server in the middle.</p>
+      <button class="btn pri wide" data-act="sync-setup">Set up OneDrive sync</button>`;
+    return h + `</section>`;
+  }
+  const m = syncMeta();
+  const tok = lsGet(TOK_KEY);
+  if (!linked()) {
+    h += `<p class="hint">Client ID is saved. Connect your Microsoft account to start
+      syncing.</p>
+      <button class="btn pri wide" data-act="sync-in">Connect OneDrive</button>
+      <button class="btn wide" style="margin-top:8px" data-act="sync-setup">Change client ID</button>`;
+    return h + `</section>`;
+  }
+  h += `<dl class="card">
+    <div class="kv"><dt>Account</dt><dd style="font-family:var(--sans)">${esc(tok.who || "connected")}</dd></div>
+    <div class="kv"><dt>This device</dt><dd style="font-family:var(--sans)">${esc(S.deviceName || defaultDeviceName())}</dd></div>
+    <div class="kv"><dt>Status</dt><dd style="font-family:var(--sans);color:${m.error ? "var(--flag)" : "var(--ink)"}">${
+      esc(SYNCING ? "syncing" : m.error ? m.error : dirty() ? "changes waiting" : "up to date")}</dd></div>
+    <div class="kv"><dt>Last push</dt><dd>${m.pushed ? esc(agoText(m.pushed)) : "\u2014"}</dd></div>
+    <div class="kv"><dt>Last pull</dt><dd>${m.pulled ? esc(agoText(m.pulled)) : "\u2014"}</dd></div>
+    <div class="kv"><dt>Revision</dt><dd>${fmt(S.rev)}</dd></div>
+  </dl>
+  <div class="btnrow split" style="margin-top:10px">
+    <button class="btn pri" data-act="sync-now">Sync now</button>
+    <button class="btn" data-act="sync-name">Name device</button>
+  </div>
+  <button class="btn dgr wide" style="margin-top:8px" data-act="sync-out">Disconnect OneDrive</button>
+  <p class="hint" style="margin-top:10px">Changes push a couple of seconds after you make
+    them, and the app checks for newer copies when you open or return to it. A browser
+    sign-in lasts 24 hours at most, so expect to tap through a sign-in now and then.
+    Nothing waits on the network: log a trip with no signal and it syncs when you are back.</p>`;
+  return h + `</section>`;
+}
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Platform quirks.
+
+   Three browsers, three sets of rules:
+
+   Firefox on the desktop runs service workers but will not install a web app,
+   so it lives in a tab. Asking for persistent storage shows a permission
+   prompt, so it is asked once and the answer remembered.
+
+   Chrome on Android is the good case: installs to the home screen, silent
+   persistent storage, no eviction surprises.
+
+   Anything on iOS or iPadOS is WebKit regardless of the icon on it. WebKit
+   deletes localStorage, IndexedDB and service worker registrations after
+   seven days of browser use without interacting with the site. Home screen
+   web apps are exempt, and only Safari can add them. So on the iPad this app
+   belongs on the home screen via Safari, not in a Chrome tab.
+   ========================================================================== */
+
+const PERSIST_ASKED = "armory.persistAsked";
+
+function plat() {
+  const ua = navigator.userAgent || "";
+  const iOSish = /iPad|iPhone|iPod/.test(ua)
+    || (/Macintosh/.test(ua) && int(navigator.maxTouchPoints) > 1);
+  const standalone = navigator.standalone === true
+    || !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+  return {
+    ua, iOSish, standalone,
+    firefox: /firefox|fxios/i.test(ua),
+    chromeIOS: /CriOS/.test(ua),
+    android: /Android/.test(ua),
+    sw: "serviceWorker" in navigator,
+    /* Firefox is the one that puts a prompt in front of the request. */
+    promptsForPersist: /firefox/i.test(ua) && !/fxios/i.test(ua),
+  };
+}
+
+/* WebKit wants this re-requested each launch, Firefox must not be nagged. */
+async function requestPersist(force) {
+  if (!navigator.storage || !navigator.storage.persist) return null;
+  let already = false;
+  try { already = await navigator.storage.persisted(); } catch (e) { return null; }
+  if (already) return true;
+  const p = plat();
+  if (p.promptsForPersist && !force) {
+    let asked = null;
+    try { asked = localStorage.getItem(PERSIST_ASKED); } catch (e) {}
+    if (asked) return false;
+  }
+  try { localStorage.setItem(PERSIST_ASKED, "1"); } catch (e) {}
+  try { return await navigator.storage.persist(); } catch (e) { return null; }
+}
+
+ACT["persist-ask"] = async () => {
+  const r = await requestPersist(true);
+  if (r === true) toast("This browser will keep the data.");
+  else if (r === null) toast("This browser does not offer a persistence setting.");
+  else toast("Request declined. Export backups and keep opening the app.");
+  render();
+  paintStorage();
+};
+
+/* Filled in after render, since both answers are async. */
+async function paintStorage() {
+  const mode = $("#persistmode");
+  if (mode) {
+    let p = null;
+    try { p = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; }
+    catch (e) {}
+    mode.textContent = p === true ? "persistent" : p === false ? "best effort" : "unknown";
+    mode.style.color = p === true ? "var(--moss)" : p === false ? "var(--copper)" : "var(--ink-2)";
+  }
+  const use = $("#usage");
+  if (use && navigator.storage && navigator.storage.estimate) {
+    try {
+      const e = await navigator.storage.estimate();
+      use.textContent = ((e.usage || 0) / 1024).toFixed(0) + " KB";
+    } catch (er) { use.textContent = "unknown"; }
+  }
+}
+
+/* ---------------------------------------------- setup link across devices */
+/* The client ID is not a secret: this is a public client using PKCE, and the
+   redirect URI is what actually binds the flow. Carrying it in the link means
+   setting up the second and third browser is one tap, and recovering from a
+   storage wipe does not mean retyping a GUID. */
+function setupLink() {
+  return clientId() ? redirectUri() + "#cid=" + clientId() : redirectUri();
+}
+
+function adoptClientIdFromUrl() {
+  const h = String(location.hash || "");
+  const m = h.match(/cid=([0-9a-f-]{30,40})/i);
+  if (!m) return;
+  try {
+    if (!localStorage.getItem(CID_KEY)) localStorage.setItem(CID_KEY, m[1]);
+  } catch (e) {}
+  try { history.replaceState({}, "", redirectUri()); } catch (e) {}
+}
+
+ACT["sync-link"] = async () => {
+  const url = setupLink();
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    }
+  } catch (e) {}
+  openSheet("Set up another device", `
+    <p class="hint">Open this link on your other browser or device. It carries the client
+      ID, so all you do there is connect your Microsoft account. ${copied
+        ? "Already copied to the clipboard." : "Copy it from below."}</p>
+    <div class="mono-list" style="word-break:break-all;background:var(--card);
+      border:1px solid var(--rule);border-radius:7px;padding:10px;color:var(--ink)">${esc(url)}</div>
+    <p class="hint" style="margin-top:12px">The client ID is not a secret. It identifies the
+      app, and the registered redirect address is what stops anyone else using it. Your
+      account and your data are not in this link.</p>
+    <button class="btn wide" style="margin-top:4px" data-act="sheet-close">Done</button>`);
+};
+
+/* ---------------------------------------------------------- advice panel */
+function platformPanel() {
+  const p = plat();
+  let head, body, action = "";
+
+  if (p.iOSish && !p.standalone) {
+    head = "This iPad browser will delete your data";
+    body = `WebKit clears local storage after seven days of browser use without you
+      opening this site, and that applies to every browser on iPadOS including Chrome.
+      Web apps added to the home screen are exempt. Open this address in <b>Safari</b>,
+      then Share and <b>Add to Home Screen</b>, and launch it from that icon. Chrome on
+      iPad also cannot run the offline cache.`;
+    action = `<p class="hint" style="margin:10px 0 0">With OneDrive sync on, a wipe here
+      costs you the sign-in and the client ID rather than the log itself. Keep the setup
+      link handy and it is a two-tap recovery.</p>`;
+  } else if (p.iOSish && p.standalone) {
+    head = "Running from the home screen";
+    body = `Good. Home screen web apps are exempt from WebKit's seven-day storage purge,
+      and this one keeps its data separate from Safari, so you sign in here once on its
+      own.`;
+  } else if (p.firefox && !p.android) {
+    head = "Firefox on the desktop";
+    body = `Everything works here, including the offline cache, but Firefox does not
+      install web apps, so keep it as a pinned tab or a bookmark rather than looking for
+      an install button. One thing to check: if you have Firefox set to clear cookies and
+      site data on exit, it takes this log with it. Add an exception for this site, or
+      lean on OneDrive sync and backups.`;
+  } else if (p.android) {
+    head = "Chrome on Android";
+    body = `The best case of the three. Use the menu and <b>Install app</b> or <b>Add to
+      Home screen</b> for a full-screen icon, offline caching, and storage the browser is
+      far less willing to clear.`;
+  } else {
+    head = "This browser";
+    body = `Storage and offline caching behave normally here. Install to the home screen
+      or desktop if the browser offers it, which makes the browser less likely to clear
+      the data.`;
+  }
+
+  return `<section class="blk"><h2>This device</h2>
+    <div class="card"><h3>${esc(head)}</h3>
+    <p class="hint" style="margin:6px 0 0">${body}</p>${action}</div>
+    <button class="btn wide" style="margin-top:10px" data-act="sync-link">Copy setup link for another device</button>
+  </section>`;
+}
+
+adoptClientIdFromUrl();
+</script>
+<script>
+"use strict";
+
+/* ========================================================= VELOCITY ==== */
+RENDER.velocity = function () {
+  let h = `<section class="blk"><h2>Velocity
+    <button class="btn sm" data-act="vel-new">Add</button></h2>
+    <p class="hint">Average tells you where the load sits. SD and extreme spread tell you
+      whether it will hold at distance.</p></section>`;
+  if (!S.velocity.length) return h + emptyState("No strings yet", "Record a chronograph string and the stats come with it.", "Add a string", "vel-new");
+
+  const groups = [];
+  S.velocity.forEach((v) => {
+    const key = (v.firearmId && gun(v.firearmId) ? gun(v.firearmId).name : v.firearmName) || "Unassigned";
+    if (!groups.includes(key)) groups.push(key);
+  });
+
+  h += groups.map((key) => {
+    const items = S.velocity.filter((v) => {
+      const k = (v.firearmId && gun(v.firearmId) ? gun(v.firearmId).name : v.firearmName) || "Unassigned";
+      return k === key;
+    });
+    return `<section class="blk"><h3 style="margin-bottom:8px">${esc(key)}</h3>` +
+      items.map((v) => {
+        const st = vstats(v.shots);
+        if (!st) return "";
+        const span = Math.max(st.es, 1);
+        return `<div class="card" style="margin-bottom:8px">
+          <button class="row" style="padding:0;border:0;width:100%" data-act="vel-open" data-id="${esc(v.id)}">
+            <span class="grow"><span class="ttl">${esc(v.ammoLabel)}</span>
+            <span class="meta">${v.barrelLengthIn ? v.barrelLengthIn + "in" : "length not set"}
+              &middot; ${st.n} shots${v.date ? " \u00b7 " + esc(v.date) : ""}</span></span>
+            <span class="chev">&rsaquo;</span></button>
+          <div class="counter" style="margin-top:6px"><span class="big" style="font-size:2rem">${Math.round(st.avg)}</span>
+            <span class="unit">fps average</span></div>
+          <div class="split-nums">
+            <div><span>SD</span><b>${st.sd.toFixed(1)}</b></div>
+            <div><span>Spread</span><b>${fmt(st.es)}</b></div>
+            <div><span>Low</span><b>${fmt(st.lo)}</b></div>
+            <div><span>High</span><b>${fmt(st.hi)}</b></div>
+          </div>
+          <div class="stripe">${v.shots.map((s) => {
+            const rel = (s - st.lo) / span;
+            return `<i class="${Math.abs(s - st.avg) > st.sd ? "" : "hi"}"
+              style="height:${(28 * (0.35 + 0.65 * rel)).toFixed(0)}px" title="${s}"></i>`;
+          }).join("")}</div>
+          <div class="mono-list" style="margin-top:6px">${v.shots.join("  ")}</div>
+        </div>`;
+      }).join("") + `</section>`;
+  }).join("");
+
+  h += `<section class="blk"><button class="btn wide" data-act="vel-export">Export velocity data</button>
+    <p class="hint" style="margin-top:8px">JSON with shots and stats per string, for MSDope
+      or any other solver.</p></section>`;
+  return h;
+};
+
+ACT["vel-new"] = () => velEdit(null);
+ACT["vel-open"] = (id) => velEdit(id);
+
+function velEdit(id) {
+  const v = id ? byId(S.velocity, id) : { firearmId: "", firearmName: "", ammoId: "",
+    ammoLabel: "", barrelLengthIn: null, date: today(), shots: [], notes: "" };
+  openSheet(id ? v.ammoLabel : "Add a string", `
+    <div class="f2">
+      <label class="f"><span>Firearm</span><select name="firearmId">
+        <option value="">Unassigned</option>${selOpts(S.firearms, v.firearmId, (x) => x.name)}</select></label>
+      <label class="f"><span>Barrel length (in)</span><input type="number" step="0.1" name="barrelLengthIn"
+        value="${v.barrelLengthIn == null ? "" : v.barrelLengthIn}"></label>
+    </div>
+    <label class="f"><span>Ammunition</span><select name="ammoId">
+      <option value="">Not linked</option>${selOptsGrouped(S.ammo, v.ammoId, ammoLabel, (x) => x.caliber)}</select></label>
+    <label class="f"><span>Label</span><input name="ammoLabel" value="${esc(v.ammoLabel)}" placeholder="ADI F1 62gr"></label>
+    <label class="f"><span>Date</span><input type="date" name="date" value="${esc(v.date || "")}"></label>
+    <label class="f"><span>Shots (fps)</span><input name="shots" inputmode="numeric"
+      value="${esc((v.shots || []).join(", "))}" placeholder="2754, 2747, 2713"></label>
+    <p class="hint" style="margin:-6px 0 12px">Separate with commas or spaces.</p>
+    <label class="f"><span>Notes</span><textarea name="notes">${esc(v.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="vel-save" data-id="${esc(id || "")}">${id ? "Save" : "Add string"}</button>
+    ${id ? `<button class="btn dgr wide" style="margin-top:8px" data-act="vel-del" data-id="${esc(id)}">Delete</button>` : ""}`);
+}
+
+ACT["vel-save"] = (id) => {
+  const f = readForm($("#sheetbody"));
+  const shots = String(f.shots || "").split(/[\s,;]+/).map(n).filter((x) => x > 0);
+  if (!shots.length) { toast("Enter at least one velocity."); return; }
+  const label = String(f.ammoLabel || "").trim()
+    || (f.ammoId ? ammoLabel(ammoOf(f.ammoId)) : "");
+  if (!label) { toast("Give the load a label."); return; }
+  const isNew = !id;
+  snapshot(isNew ? "add velocity string" : "edit velocity string");
+  const v = isNew ? { id: uid("v") } : byId(S.velocity, id);
+  Object.assign(v, {
+    firearmId: f.firearmId || null,
+    firearmName: f.firearmId && gun(f.firearmId) ? gun(f.firearmId).name : (v.firearmName || ""),
+    ammoId: f.ammoId || null, ammoLabel: label,
+    barrelLengthIn: f.barrelLengthIn == null ? null : n(f.barrelLengthIn),
+    date: f.date || null, shots, notes: f.notes || "",
+  });
+  if (isNew) S.velocity.push(v);
+  commit(isNew ? "String added." : "Saved."); closeSheet();
+};
+
+ACT["vel-del"] = (id) => {
+  if (!confirm("Delete this string?")) return;
+  snapshot("delete velocity string");
+  S.velocity = S.velocity.filter((x) => x.id !== id);
+  commit("Deleted."); closeSheet();
+};
+
+ACT["vel-export"] = () => {
+  const out = S.velocity.map((v) => {
+    const st = vstats(v.shots) || {};
+    return {
+      firearm: v.firearmId && gun(v.firearmId) ? gun(v.firearmId).name : v.firearmName,
+      barrelLengthIn: v.barrelLengthIn, load: v.ammoLabel,
+      caliber: v.ammoId && ammoOf(v.ammoId) ? ammoOf(v.ammoId).caliber : null,
+      grains: v.ammoId && ammoOf(v.ammoId) ? ammoOf(v.ammoId).grains : null,
+      date: v.date, shots: v.shots,
+      avgFps: st.avg ? Math.round(st.avg) : null,
+      sd: st.sd != null ? Number(st.sd.toFixed(2)) : null,
+      extremeSpread: st.es != null ? st.es : null,
+    };
+  });
+  download(`velocity-${today()}.json`, JSON.stringify({ exported: today(), strings: out }, null, 1));
+  toast("Velocity data exported.");
+};
+
+/* ============================================================== NFA ===== */
+RENDER.nfa = function () {
+  let h = `<section class="blk"><h2>NFA items
+    <button class="btn sm" data-act="nfa-new">Add</button></h2></section>`;
+  if (!S.nfa.length) return h + emptyState("Nothing registered here", "Track serials, Form 4 dates and rounds through each item.", "Add an item", "nfa-new");
+  h += `<div class="rows">` + S.nfa.map((x) => {
+    const wait = daysBetween(x.form4Submitted, x.approved);
+    const pending = !x.approved;
+    const waiting = pending ? daysBetween(x.form4Submitted, today()) : null;
+    return `<button class="row" data-act="nfa-open" data-id="${esc(x.id)}">
+      <span class="grow"><span class="ttl">${esc(x.model)}</span>
+      <span class="meta">${esc(x.kind || "")}${x.serial ? " \u00b7 " + esc(x.serial) : ""}
+        ${wait != null ? ` \u00b7 approved in ${fmt(wait)} days` : waiting != null ? ` \u00b7 waiting ${fmt(waiting)} days` : ""}</span></span>
+      <span class="tag ${pending ? "" : "moss"}">${esc(pending ? "pending" : (x.status || "approved").toLowerCase())}</span>
+      <span class="chev">&rsaquo;</span></button>`;
+  }).join("") + `</div>`;
+  return h;
+};
+
+ACT["nfa-new"] = () => nfaEdit(null);
+ACT["nfa-open"] = (id) => nfaEdit(id);
+
+function nfaEdit(id) {
+  const x = id ? byId(S.nfa, id) : { model: "", serial: "", kind: "Suppressor",
+    form4Submitted: "", approved: "", status: "", roundsFired: 0, notes: "" };
+  const wait = daysBetween(x.form4Submitted, x.approved);
+  openSheet(id ? x.model : "Add an NFA item", `
+    ${wait != null ? `<div class="note">Wait time was ${fmt(wait)} days.</div>` : ""}
+    <div class="f2">
+      <label class="f"><span>Model</span><input name="model" value="${esc(x.model)}"></label>
+      <label class="f"><span>Serial</span><input name="serial" value="${esc(x.serial)}"></label>
+      <label class="f"><span>Type</span><input name="kind" value="${esc(x.kind || "")}" placeholder="Suppressor, SBR"></label>
+      <label class="f"><span>Rounds through it</span><input type="number" name="roundsFired" value="${int(x.roundsFired)}"></label>
+      <label class="f"><span>Form 4 submitted</span><input type="date" name="form4Submitted" value="${esc(x.form4Submitted || "")}"></label>
+      <label class="f"><span>Approved</span><input type="date" name="approved" value="${esc(x.approved || "")}"></label>
+    </div>
+    <label class="f"><span>Status</span><input name="status" value="${esc(x.status || "")}" placeholder="APPROVED, pending"></label>
+    <label class="f"><span>Notes</span><textarea name="notes">${esc(x.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="nfa-save" data-id="${esc(id || "")}">${id ? "Save" : "Add item"}</button>
+    ${id ? `<button class="btn dgr wide" style="margin-top:8px" data-act="nfa-del" data-id="${esc(id)}">Delete</button>` : ""}`);
+}
+
+ACT["nfa-save"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.model || "").trim()) { toast("Name the item."); return; }
+  const isNew = !id;
+  snapshot(isNew ? "add NFA item" : "edit " + v.model);
+  const x = isNew ? { id: uid("n") } : byId(S.nfa, id);
+  Object.assign(x, {
+    model: String(v.model).trim(), serial: v.serial || "", kind: v.kind || "",
+    form4Submitted: v.form4Submitted || null, approved: v.approved || null,
+    status: v.status || "", roundsFired: int(v.roundsFired), notes: v.notes || "",
+  });
+  if (isNew) S.nfa.push(x);
+  commit(isNew ? "Item added." : "Saved."); closeSheet();
+};
+ACT["nfa-del"] = (id) => {
+  if (!confirm("Delete this item?")) return;
+  snapshot("delete NFA item");
+  S.nfa = S.nfa.filter((x) => x.id !== id);
+  commit("Deleted."); closeSheet();
+};
+
+/* ============================================================ TOOLS ==== */
+let WT = { containerId: "", tare: 0, gross: 0, ammoId: "", ref10: 0, res: 1 };
+let WTT = null;
+
+RENDER.tools = function () {
+  const a = WT.ammoId ? ammoOf(WT.ammoId) : null;
+  const ref10 = WT.ref10 || (a && a.ref10G) || 0;
+  const tare = WT.containerId === "__custom" ? n(WT.tare)
+    : (byId(S.containers, WT.containerId) || {}).tareG || n(WT.tare);
+  const net = n(WT.gross) - n(tare);
+  const per = ref10 / 10;
+  let est = null, lo = null, hi = null;
+  if (per > 0 && net > 0) {
+    est = net / per;
+    const res = Math.max(n(WT.res), 0.1);
+    // Two weighings carry scale error, and the reference weight carries its own.
+    const relErr = (2 * res) / net + (res / Math.max(ref10, res));
+    lo = est * (1 - relErr); hi = est * (1 + relErr);
+  }
+
+  let h = `<section class="blk"><h2>Count ammo by weight</h2>
+    <p class="hint">Weigh the full container, subtract the empty weight, divide by the weight
+      of ten rounds. Good for a can you do not want to hand count.</p>
+    <div class="card">
+      <label class="f"><span>Container</span><select name="containerId" data-wt="containerId">
+        <option value="">Pick one</option>
+        ${selOpts(S.containers, WT.containerId, (c) => `${c.name} \u2014 ${c.tareG}g`)}
+        <option value="__custom"${WT.containerId === "__custom" ? " selected" : ""}>Weigh it myself</option>
+      </select></label>
+      ${WT.containerId === "__custom" ? `<label class="f"><span>Empty container weight (g)</span>
+        <input type="number" step="0.1" data-wt="tare" value="${WT.tare || ""}"></label>` : ""}
+      <label class="f"><span>Full weight (g)</span>
+        <input type="number" step="0.1" data-wt="gross" value="${WT.gross || ""}"></label>
+      <label class="f"><span>Which ammunition</span><select data-wt="ammoId">
+        <option value="">Not linked</option>${selOptsGrouped(S.ammo, WT.ammoId, ammoLabel, (x) => x.caliber)}</select></label>
+      <label class="f"><span>Weight of ten rounds (g)</span>
+        <input type="number" step="0.1" data-wt="ref10" value="${ref10 || ""}"></label>
+      <label class="f"><span>Scale resolution (g)</span>
+        <input type="number" step="0.1" data-wt="res" value="${WT.res}"></label>
+    </div></section>`;
+
+  h += `<section class="blk">`;
+  if (est == null) {
+    h += `<div class="empty">Enter a full weight and the weight of ten rounds to get a count.</div>`;
+  } else {
+    h += `<div class="card"><div class="counter"><span class="big">${fmt(est)}</span>
+      <span class="unit">rounds, give or take</span></div>
+      <dl style="margin-top:10px">
+        <div class="kv"><dt>Likely range</dt><dd>${fmt(lo)} to ${fmt(hi)}</dd></div>
+        <div class="kv"><dt>Ammunition weight</dt><dd>${net.toFixed(1)} g</dd></div>
+        <div class="kv"><dt>Per round</dt><dd>${per.toFixed(2)} g</dd></div>
+      </dl>
+      <p class="hint" style="margin:10px 0 0">A count from weight is an estimate. The range
+        widens with a coarser scale and a lighter reference sample \u2014 weigh twenty or fifty
+        rounds instead of ten to tighten it.</p>
+      ${a ? `<div class="btnrow" style="margin-top:12px">
+        <button class="btn sm" data-act="wt-apply" data-v="${Math.round(est)}">Set loose count to ${fmt(est)}</button>
+        ${ref10 ? `<button class="btn sm" data-act="wt-saveref" data-v="${ref10}">Remember this reference</button>` : ""}
+      </div>` : ""}</div>`;
+  }
+  h += `</section>`;
+
+  h += `<section class="blk"><h2>Containers
+    <button class="btn sm" data-act="cont-new">Add</button></h2>
+    <div class="rows">` + (S.containers.length ? S.containers.map((c) =>
+      `<button class="row" data-act="cont-open" data-id="${esc(c.id)}">
+        <span class="grow"><span class="ttl">${esc(c.name)}</span></span>
+        <span class="num">${c.tareG} g</span><span class="chev">&rsaquo;</span></button>`).join("")
+      : `<div style="padding:16px" class="hint">No containers saved.</div>`) + `</div></section>`;
+  return h;
+};
+
+ACT["wt-apply"] = (_id, v) => {
+  const a = ammoOf(WT.ammoId);
+  if (!a) return;
+  if (!confirm(`Set the loose count for ${ammoLabel(a)} to ${fmt(v)}? The current figure is ${fmt(a.qtyLoose)}.`)) return;
+  snapshot("weight count, " + ammoLabel(a));
+  a.qtyLoose = int(v);
+  S.ledger.push({ id: uid("lg"), at: today(), kind: "weighcount", ammoId: a.id, to: int(v) });
+  commit("Loose count updated.");
+};
+ACT["wt-saveref"] = (_id, v) => {
+  const a = ammoOf(WT.ammoId);
+  if (!a) return;
+  snapshot("save reference weight");
+  a.ref10G = n(v);
+  commit("Reference weight saved to that line.");
+};
+ACT["cont-new"] = () => contEdit(null);
+ACT["cont-open"] = (id) => contEdit(id);
+function contEdit(id) {
+  const c = id ? byId(S.containers, id) : { name: "", tareG: null };
+  openSheet(id ? c.name : "Add a container", `
+    <label class="f"><span>Name</span><input name="name" value="${esc(c.name)}" placeholder="ammo can 2"></label>
+    <label class="f"><span>Empty weight (g)</span><input type="number" step="0.1" name="tareG" value="${c.tareG == null ? "" : c.tareG}"></label>
+    <button class="btn pri wide" data-act="cont-save" data-id="${esc(id || "")}">${id ? "Save" : "Add"}</button>
+    ${id ? `<button class="btn dgr wide" style="margin-top:8px" data-act="cont-del" data-id="${esc(id)}">Delete</button>` : ""}`);
+}
+ACT["cont-save"] = (id) => {
+  const v = readForm($("#sheetbody"));
+  if (!String(v.name || "").trim() || v.tareG == null) { toast("Name and empty weight are both needed."); return; }
+  snapshot(id ? "edit container" : "add container");
+  const c = id ? byId(S.containers, id) : { id: uid("c") };
+  c.name = String(v.name).trim(); c.tareG = n(v.tareG);
+  if (!id) S.containers.push(c);
+  commit("Saved."); closeSheet();
+};
+ACT["cont-del"] = (id) => {
+  snapshot("delete container");
+  S.containers = S.containers.filter((x) => x.id !== id);
+  commit("Deleted."); closeSheet();
+};
+
+/* ============================================================= DATA ==== */
+RENDER.data = function () {
+  const rounds = S.ammo.reduce((t, a) => t + onHand(a), 0);
+  const ul = undoLabel();
+  return (typeof syncPanel === "function" ? syncPanel() : "") +
+  (typeof platformPanel === "function" ? platformPanel() : "") +
+  `<section class="blk"><h2>Backup</h2>
+    <p class="hint">A file you can keep, move to another device, or feed to the native
+      build later. Worth doing after a big session even with sync switched on.</p>
+    <div class="btnrow split">
+      <button class="btn pri" data-act="data-export">Export a backup</button>
+      <button class="btn" data-act="data-import">Import a backup</button>
+    </div>
+    <input type="file" id="importfile" accept=".json,application/json" class="sr"></section>
+
+  <section class="blk"><h2>What is in here</h2><dl class="card">
+    <div class="kv"><dt>Firearms</dt><dd>${fmt(S.firearms.length)}</dd></div>
+    <div class="kv"><dt>Ammunition lines</dt><dd>${fmt(S.ammo.length)}</dd></div>
+    <div class="kv"><dt>Rounds on hand</dt><dd>${fmt(rounds)}</dd></div>
+    <div class="kv"><dt>Magazine types</dt><dd>${fmt(S.magTypes.length)}</dd></div>
+    <div class="kv"><dt>Magazines owned</dt><dd>${fmt(S.magTypes.reduce((t, m) => t + int(m.quantity), 0))}</dd></div>
+    <div class="kv"><dt>Magazines loaded</dt><dd>${fmt(S.magLoads.length)}</dd></div>
+    <div class="kv"><dt>Trips closed</dt><dd>${fmt(S.trips.filter((t) => t.status === "closed").length)}</dd></div>
+    <div class="kv"><dt>Velocity strings</dt><dd>${fmt(S.velocity.length)}</dd></div>
+    <div class="kv"><dt>Storage used</dt><dd id="usage">measuring</dd></div>
+    <div class="kv"><dt>Storage mode</dt><dd id="persistmode" style="font-family:var(--sans)">checking</dd></div>
+  </dl>
+  <button class="btn wide" style="margin-top:10px" data-act="persist-ask">Ask this browser to keep the data</button>
+  </section>
+
+  ${ul ? `<section class="blk"><h2>Undo</h2>
+    <button class="btn wide" data-act="undo">Undo: ${esc(ul)}</button>
+    <p class="hint" style="margin-top:8px">The last ${UNDO_MAX} changes can be rolled back one at a time.</p></section>` : ""}
+
+  <section class="blk"><h2>Start over</h2>
+    <p class="hint">Erases everything on this device and leaves an empty log. Export first
+      if there is any chance you want it back.</p>
+    <button class="btn dgr wide" data-act="data-reset">Erase and start empty</button></section>`;
+};
+
+function download(name, text) {
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+ACT["data-export"] = () => {
+  download(`armory-${today()}.json`, JSON.stringify(S, null, 1));
+  toast("Backup exported.");
+};
+ACT["data-import"] = () => $("#importfile").click();
+ACT["data-reset"] = () => {
+  if (!confirm("Erase everything on this device? Anything not exported is gone.")) return;
+  snapshot("erase everything");
+  S = migrate(JSON.parse(JSON.stringify(SEED)));
+  commit("Erased.");
+};
+ACT["undo"] = () => undoLast();
+ACT["sheet-close"] = () => closeSheet();
+ACT["go-home"] = () => go("home");
+ACT["go-guns"] = () => go("guns");
+ACT["go-ammo"] = () => go("ammo");
+ACT["go-mags"] = () => go("mags");
+ACT["go-velocity"] = () => go("velocity");
+ACT["go-nfa"] = () => go("nfa");
+ACT["go-tools"] = () => go("tools");
+ACT["go-data"] = () => go("data");
+
+/* ========================================================== WIRING ===== */
+document.addEventListener("click", (ev) => {
+  const nudge = ev.target.closest("[data-nudge]");
+  if (nudge) {
+    const box = nudge.closest("[data-step]");
+    const inp = $("input", box);
+    const step = int(nudge.dataset.nudge) * (ev.shiftKey ? 10 : 1);
+    const min = inp.min === "" ? -Infinity : n(inp.min);
+    inp.value = Math.max(min, int(inp.value) + step);
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  const tab = ev.target.closest("#tabs button");
+  if (tab) { RANGEMODE = "trip"; go(tab.dataset.go); return; }
+  const el = ev.target.closest("[data-act]");
+  if (!el) return;
+  const fn = ACT[el.dataset.act];
+  if (!fn) { console.warn("no handler for", el.dataset.act); return; }
+  ev.preventDefault();
+  fn(el.dataset.id || null, el.dataset.v);
+});
+
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.dataset && t.dataset.actChange) { (ACT[t.dataset.actChange] || (() => {}))(); return; }
+  if (t.dataset && t.dataset.wt) {
+    WT[t.dataset.wt] = t.type === "number" ? n(t.value) : t.value;
+    if (t.dataset.wt === "ammoId") WT.ref10 = 0;
+    if (t.dataset.wt === "containerId") WT.tare = 0;
+    render();
+    return;
+  }
+  if (t.id === "importfile" && t.files && t.files[0]) {
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const st = JSON.parse(fr.result);
+        if (!st || !Array.isArray(st.firearms)) throw new Error("not an armory backup");
+        if (!confirm("Replace everything on this device with this backup?")) return;
+        snapshot("import backup");
+        S = migrate(st);
+        commit("Backup imported.");
+      } catch (e) {
+        toast("That file is not an armory backup.");
+        console.error(e);
+      }
+      t.value = "";
+    };
+    fr.readAsText(t.files[0]);
+  }
+});
+
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (t.dataset && t.dataset.e) { coEdit(t); return; }
+  if (t.dataset && t.dataset.wt) {
+    WT[t.dataset.wt] = t.type === "number" ? n(t.value) : t.value;
+    // Recompute the readout without redrawing the field being typed in.
+    clearTimeout(WTT);
+    WTT = setTimeout(() => { if (SCREEN === "tools") render(); }, 450);
+  }
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && $("#sheet").classList.contains("on")) closeSheet();
+});
+$("#scrim").addEventListener("click", closeSheet);
+$("#sheetx").addEventListener("click", closeSheet);
+
+/* ============================================================= INIT ==== */
+S = load();
+if (!localStorage.getItem(KEY)) save({ noRev: true });
+go("home");
+
+/* Finish any sign-in redirect, then reconcile with OneDrive. */
+(async function startSync() {
+  if (typeof handleAuthRedirect !== "function") return;
+  const justLinked = await handleAuthRedirect();
+  if (justLinked) { render(); toast("OneDrive connected."); }
+  if (typeof syncNow === "function" && linked()) await syncNow(false);
+  render();
+})();
+
+/* Coming back to the app is the moment another device's changes matter. */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") { if (DIRTY) save({ noRev: true }); return; }
+  if (typeof syncNow === "function" && Date.now() - LAST_CHECK > 30000) syncNow(false);
+});
+window.addEventListener("online", () => { if (typeof syncNow === "function") syncNow(false); });
+setInterval(() => {
+  if (typeof syncNow === "function" && document.visibilityState === "visible") syncNow(false);
+}, 300000);
+
+if (typeof requestPersist === "function") requestPersist(false).then(() => paintStorage());
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+window.addEventListener("beforeunload", () => { if (DIRTY) save({ noRev: true }); });
+</script>
+</body>
+</html>
