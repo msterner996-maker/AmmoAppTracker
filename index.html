@@ -2639,7 +2639,7 @@ function syncPanel() {
 const PERSIST_ASKED = "armory.persistAsked";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-aabb16";
+const APP_VERSION = "2026.09.08-9c2755";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -3193,28 +3193,74 @@ function bkName(d) {
     + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
 }
 
+/* Create the folder in its own request rather than relying on the upload to
+   create missing parents. One more round trip, no assumption. 409 means it is
+   already there, which is the normal case. */
+async function bkEnsureFolder() {
+  const r = await graph(`${GRAPH}/me/drive/special/approot/children`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "backups", folder: {},
+      "@microsoft.graph.conflictBehavior": "fail" }),
+  });
+  if (!r || r.needsAuth) return false;
+  return r.ok || r.status === 409;
+}
+
+/* A free filename, found by asking. Seconds in the stamp make a clash rare; this
+   makes overwriting a previous snapshot impossible. Done with a plain HEAD-style
+   GET rather than a conflictBehavior query parameter, because a bare path upload
+   is the request shape already known to work for the state file and the PDFs. */
+async function bkFreeName() {
+  const base = bkName(new Date()).replace(/\.json$/, "");
+  for (let i = 0; i < 5; i++) {
+    const nm = (i ? `${base}-${i + 1}` : base) + ".json";
+    const r = await graph(`${BK_DIR}/${encodeURIComponent(nm)}?$select=name`);
+    if (!r || r.needsAuth) return nm;
+    if (r.status === 404) return nm;
+  }
+  return `${base}-${Math.random().toString(36).slice(2, 6)}.json`;
+}
+
 /* Pass json to snapshot something other than the current state, which is how
    the pre-import copy is taken before the state is replaced. */
 async function backupNow(json, silent) {
   if (!linked()) { if (!silent) toast("Connect OneDrive to keep snapshots there."); return false; }
   const body = json || JSON.stringify(S);
-  const name = bkName(new Date());
-  /* conflictBehavior=rename makes OneDrive itself guarantee the name is free.
-     Timestamping to the second makes a clash unlikely; this makes overwriting a
-     previous snapshot impossible, which is the property that actually matters. */
-  const r = await graph(
-    `${BK_DIR}/${encodeURIComponent(name)}:/content?@microsoft.graph.conflictBehavior=rename`, {
+  try {
+    await bkEnsureFolder();
+    const name = await bkFreeName();
+    const r = await graph(`${BK_DIR}/${encodeURIComponent(name)}:/content`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body,
     });
-  if (!r || r.needsAuth || !r.ok) {
-    if (!silent) toast("Could not write the snapshot to OneDrive.");
+    if (!r || r.needsAuth) {
+      setSyncMeta({ lastBackupError: "Sign-in expired before the snapshot could be written." });
+      if (!silent) toast("Sign in again to write snapshots.");
+      return false;
+    }
+    if (!r.ok) {
+      /* A snapshot that fails quietly is worse than no snapshot, so the status
+         is kept and shown on the Data screen. */
+      let detail = "";
+      try {
+        const j = await r.res.json();
+        detail = (j && j.error && (j.error.message || j.error.code)) || "";
+      } catch (e) {}
+      setSyncMeta({ lastBackupError: `OneDrive refused the snapshot (${r.status})`
+        + (detail ? `: ${String(detail).slice(0, 140)}` : "") });
+      if (!silent) toast(`OneDrive refused the snapshot (${r.status}).`);
+      return false;
+    }
+    const saved = await r.res.json().catch(() => ({}));
+    setSyncMeta({ lastBackup: Date.now(), lastBackupName: saved.name || name,
+      lastBackupError: null });
+    bkPrune().catch(() => {});
+    if (!silent) toast("Snapshot saved to OneDrive.");
+    return true;
+  } catch (e) {
+    setSyncMeta({ lastBackupError: (e && e.message) || "The snapshot request failed." });
+    if (!silent) toast("Could not reach OneDrive for the snapshot.");
     return false;
   }
-  const saved = await r.res.json().catch(() => ({}));
-  setSyncMeta({ lastBackup: Date.now(), lastBackupName: saved.name || name });
-  bkPrune().catch(() => {});
-  if (!silent) toast("Snapshot saved to OneDrive.");
-  return true;
 }
 
 async function bkList() {
@@ -3303,6 +3349,42 @@ ACT["backup-del"] = async (name) => {
   ACT["backup-browse"]();
 };
 
+/* Reports what the app can actually see, so "I cannot find the folder" becomes a
+   question with an answer instead of a guess. */
+ACT["backup-diagnose"] = async () => {
+  openSheet("Checking", `<div class="empty">Asking OneDrive\u2026</div>`);
+  const lines = [];
+  const folder = await graph(`${BK_DIR}?$select=name,id,folder`);
+  lines.push(["backups folder", folder && folder.needsAuth ? "sign-in expired"
+    : folder && folder.ok ? "exists" : folder ? `missing (${folder.status})` : "request failed"]);
+  if (folder && !folder.ok && !folder.needsAuth) {
+    const made = await bkEnsureFolder();
+    lines.push(["create it", made ? "created" : "could not create"]);
+  }
+  const all = await bkList();
+  lines.push(["snapshots visible", all === null ? "could not list" : String(all.length)]);
+  const root = await graph(`${GRAPH}/me/drive/special/approot?$select=name,webUrl`);
+  let where = "";
+  if (root && root.ok) {
+    const j = await root.res.json().catch(() => ({}));
+    where = j.webUrl || "";
+    lines.push(["app folder", j.name || "?"]);
+  }
+  const m = syncMeta();
+  if (m.lastBackupError) lines.push(["last error", m.lastBackupError]);
+
+  reSheet("Backups folder check", `
+    <dl class="card">${lines.map(([k, v]) =>
+      `<div class="kv"><dt>${esc(k)}</dt><dd style="font-family:var(--sans);text-align:right">${esc(v)}</dd></div>`
+    ).join("")}</dl>
+    ${where ? `<p class="hint" style="margin-top:12px;word-break:break-all">The app folder
+      OneDrive reports is:<br>${esc(where)}</p>` : ""}
+    <div class="btnrow split" style="margin-top:12px">
+      <button class="btn pri" data-act="backup-now">Write one now</button>
+      <button class="btn" data-act="backup-browse">Browse</button>
+    </div>`);
+};
+
 function backupPanel() {
   if (!linked()) {
     return `<section class="blk"><h2>Snapshots</h2>
@@ -3319,6 +3401,7 @@ function backupPanel() {
       day otherwise, and before any import. The newest ${BK_KEEP} are kept. On the PC
       that is your OneDrive folder under <b>Apps\\Armory\\backups</b>, so they are on
       disk without you saving anything.</p>
+    ${m.lastBackupError ? `<div class="note flag">${esc(m.lastBackupError)}</div>` : ""}
     <dl class="card">
       <div class="kv"><dt>Last snapshot</dt><dd>${m.lastBackup ? esc(agoText(m.lastBackup)) : "\u2014"}</dd></div>
       ${m.lastBackupName ? `<div class="kv"><dt>Named</dt><dd style="font-size:0.75rem">${esc(m.lastBackupName)}</dd></div>` : ""}
@@ -3326,7 +3409,9 @@ function backupPanel() {
     <div class="btnrow split" style="margin-top:10px">
       <button class="btn" data-act="backup-now">Snapshot now</button>
       <button class="btn" data-act="backup-browse">Browse snapshots</button>
-    </div></section>`;
+    </div>
+    <button class="btn wide" style="margin-top:8px" data-act="backup-diagnose">Check the backups folder</button>
+    </section>`;
 }
 </script>
 <script>
