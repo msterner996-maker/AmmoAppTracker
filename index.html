@@ -49,7 +49,9 @@ main{padding:var(--pad);max-width:760px;margin:0 auto}
 .screen{display:none}
 .screen.on{display:block}
 section.blk{margin:0 0 22px}
-section.blk>h2{margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+section.blk>h2{margin:0 0 10px;display:flex;justify-content:space-between;
+  align-items:center;gap:10px;flex-wrap:wrap}
+section.blk>h2>.btnrow{flex:none;gap:6px}
 .hint{color:var(--ink-2);font-size:0.8125rem;margin:0 0 10px}
 
 /* ---------- cards ---------- */
@@ -219,6 +221,8 @@ dl{margin:0}
   line-height:1;transition:transform .16s}
 .node.open .tw{transform:rotate(90deg);color:var(--brass)}
 .nodebody{padding:12px;border-top:1px solid var(--rule);background:var(--card-2)}
+.nodebody>.rows{border-color:var(--rule)}
+.nodebody>.rows .row:first-child{border-top:0}
 .nodebody>.card:last-child{margin-bottom:0}
 @media (prefers-reduced-motion:reduce){ .tw{transition:none} }
 .calhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
@@ -298,6 +302,10 @@ const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads"
 const KEY = "armory.state.v1";
 const UNDO_KEY = "armory.undo.v1";
 const UNDO_MAX = 8;
+
+/* Declared here because every later script registers into them. */
+const RENDER = {};     // screen name -> html builder
+const ACT = {};        // data-act name -> handler
 
 let S = null;          // live state
 let SCREEN = "home";
@@ -654,8 +662,112 @@ function emptyState(title, body, btn, act) {
 </script>
 <script>
 "use strict";
-const RENDER = {};
-const ACT = {};
+/* ==========================================================================
+   Collapsible trees.
+
+   Guns, ammo and magazines are all "a long list that divides cleanly by
+   caliber", so they get the same shape the velocity tab has: caliber as the
+   branch, tap to see what is inside, with enough on the closed branch that
+   you often do not need to open it.
+
+   Which branches are open is interface state, not log data, so it lives in
+   localStorage rather than in S. Putting it in S would push a revision to
+   OneDrive every time you tapped a caliber open.
+   ========================================================================== */
+
+const OPEN_KEY = "armory.open";
+
+function openState() {
+  try { return JSON.parse(localStorage.getItem(OPEN_KEY) || "{}") || {}; }
+  catch (e) { return {}; }
+}
+function openFor(scope) {
+  const v = openState()[scope];
+  return Array.isArray(v) ? v : null;   // null means "never touched"
+}
+function setOpenFor(scope, arr) {
+  const all = openState();
+  all[scope] = arr;
+  try { localStorage.setItem(OPEN_KEY, JSON.stringify(all)); } catch (e) {}
+}
+
+/* A single branch is not a tree worth collapsing, so it starts open. */
+function resolveOpen(scope, keys) {
+  const stored = openFor(scope);
+  if (stored) return stored.filter((k) => keys.includes(k));
+  return keys.length === 1 ? keys.slice() : [];
+}
+
+ACT["tree-toggle"] = (key, scope) => {
+  const cur = openFor(scope) || [];
+  setOpenFor(scope, cur.includes(key) ? cur.filter((k) => k !== key) : cur.concat([key]));
+  render();
+};
+
+ACT["tree-all"] = (scope, payload) => {
+  const [want, keys] = String(payload || "").split("|");
+  setOpenFor(scope, want === "1" ? (keys ? keys.split("~") : []) : []);
+  render();
+};
+
+/* branches: [{ key, name, sub, count, tag, body }]
+   actions:  [{ label, act, id, pri }]  rendered next to Expand all      */
+function treeSection(o) {
+  const keys = o.branches.map((b) => b.key);
+  const open = resolveOpen(o.scope, keys);
+  const allOpen = keys.length > 0 && open.length >= keys.length;
+  const payload = `${allOpen ? "0" : "1"}|${keys.join("~")}`;
+
+  let h = `<section class="blk"><h2>${esc(o.title)}<span class="btnrow">`;
+  if (keys.length > 1) {
+    h += `<button class="btn sm" data-act="tree-all" data-id="${esc(o.scope)}"
+      data-v="${esc(payload)}">${allOpen ? "Collapse all" : "Expand all"}</button>`;
+  }
+  (o.actions || []).forEach((a) => {
+    h += `<button class="btn sm${a.pri ? " pri" : ""}" data-act="${esc(a.act)}"${
+      a.id ? ` data-id="${esc(a.id)}"` : ""}>${esc(a.label)}</button>`;
+  });
+  h += `</span></h2>`;
+  if (o.hint) h += `<p class="hint">${o.hint}</p>`;
+
+  if (!o.branches.length) return h + (o.empty || "") + `</section>`;
+
+  h += `<div class="tree">` + o.branches.map((b) => {
+    const on = open.includes(b.key);
+    return `<div class="node${on ? " open" : ""}">
+      <button class="nodehead" data-act="tree-toggle" data-id="${esc(b.key)}"
+        data-v="${esc(o.scope)}" aria-expanded="${on}">
+        <span class="tw">&rsaquo;</span>
+        <span class="nm"><b>${esc(b.name)}</b>${b.sub ? `<span>${esc(b.sub)}</span>` : ""}</span>
+        ${b.tag || ""}
+        <span class="ct">${esc(String(b.count))}</span>
+      </button>
+      ${on ? `<div class="nodebody">${b.body()}</div>` : ""}</div>`;
+  }).join("") + `</div></section>`;
+  return h;
+}
+
+/* Order calibers the way the inventory does, so the same caliber sits in the
+   same place on every screen. */
+function caliberOrder() {
+  const order = [];
+  S.firearms.forEach((f) => { const c = f.caliber || "Caliber not set"; if (!order.includes(c)) order.push(c); });
+  S.ammo.forEach((a) => { const c = a.caliber || "Caliber not set"; if (!order.includes(c)) order.push(c); });
+  S.magTypes.forEach((m) => { const c = m.group || "Ungrouped"; if (!order.includes(c)) order.push(c); });
+  return order;
+}
+
+function byCaliber(items, get) {
+  const map = {};
+  items.forEach((x) => {
+    const c = get(x) || "Caliber not set";
+    (map[c] = map[c] || []).push(x);
+  });
+  return caliberOrder().filter((c) => map[c] && map[c].length).map((c) => [c, map[c]]);
+}
+</script>
+<script>
+"use strict";
 
 /* ============================================================ HOME ====== */
 RENDER.home = function () {
@@ -763,40 +875,50 @@ RENDER.home = function () {
 
 /* ============================================================ GUNS ====== */
 RENDER.guns = function () {
-  let h = `<section class="blk"><h2>Firearms
-    <button class="btn sm" data-act="gun-new">Add</button></h2></section>`;
-  if (!S.firearms.length) return h + emptyState("No firearms yet", "Add one to start counting rounds.", "Add a firearm", "gun-new");
-
-  const gcals = [];
-  S.firearms.forEach((f) => {
-    const c = f.caliber || "Caliber not set";
-    if (!gcals.includes(c)) gcals.push(c);
+  const groups = byCaliber(S.firearms, (f) => f.caliber);
+  return treeSection({
+    scope: "guns",
+    title: "Firearms",
+    actions: [{ label: "Add", act: "gun-new" }],
+    empty: emptyState("No firearms yet", "Add one to start counting rounds.",
+      "Add a firearm", "gun-new"),
+    branches: groups.map(([cal, items]) => {
+      const rounds = items.reduce((t, f) => t + int(f.receiverRounds), 0);
+      const due = items.filter((f) => cleanState(f).worst === "over"
+        || (milestones(f).due || []).length).length;
+      const soon = items.filter((f) => cleanState(f).worst === "near").length;
+      return {
+        key: cal,
+        name: cal,
+        sub: `${fmt(rounds)} rounds fired`,
+        count: items.length,
+        /* Enough on the closed branch to know whether it needs opening. */
+        tag: due ? `<span class="tag flag">${due} due</span>`
+          : soon ? `<span class="tag mute">${soon} soon</span>` : "",
+        body: () => items.map(gunCard).join(""),
+      };
+    }),
   });
-
-  h += gcals.map((cal) => {
-    const items = S.firearms.filter((f) => (f.caliber || "Caliber not set") === cal);
-    return `<div class="calhead"><span>${esc(cal)}</span>
-      <span class="num">${fmt(items.reduce((t, f) => t + int(f.receiverRounds), 0))} rounds</span></div>`
-      + items.map(gunCard).join("");
-  }).join("");
-  return h;
 };
 
+/* The caliber is the branch now, so the card leads with the serial instead of
+   repeating it. */
 function gunCard(f) {
-    const c = cleanState(f);
-    const ms = milestones(f);
-    return `<div class="card" style="margin-bottom:10px">
-      <button class="row" style="padding:0;border:0;width:100%" data-act="gun-open" data-id="${esc(f.id)}">
-        <span class="grow">
-          <span class="ttl" style="font-size:1.0625rem">${esc(f.name)}</span>
-          <span class="meta">${esc(f.caliber || "caliber not set")}${f.serial ? " \u00b7 " + esc(f.serial) : ""}</span>
-        </span><span class="chev">&rsaquo;</span></button>
-      <div class="counter"><span class="big">${fmt(f.receiverRounds)}</span><span class="unit">rounds fired</span></div>
-      ${gauge("Barrel clean", c.barrel)}
-      ${gauge("Deep clean", c.deep)}
-      ${(ms.due && ms.due.length) ? `<div class="tags"><span class="tag flag">${fmt(ms.due[ms.due.length - 1].rounds)} service due</span></div>`
-        : ms.next ? `<div class="tags"><span class="tag mute">next service at ${fmt(ms.next.rounds)}</span></div>` : ""}
-    </div>`;
+  const c = cleanState(f);
+  const ms = milestones(f);
+  return `<div class="card" style="margin-bottom:10px">
+    <button class="row" style="padding:0;border:0;width:100%" data-act="gun-open" data-id="${esc(f.id)}">
+      <span class="grow">
+        <span class="ttl" style="font-size:1.0625rem">${esc(f.name)}</span>
+        <span class="meta">${f.serial ? esc(f.serial) : "no serial recorded"}${
+          f.barrel && f.barrel.lengthIn ? ` \u00b7 ${f.barrel.lengthIn}in` : ""}</span>
+      </span><span class="chev">&rsaquo;</span></button>
+    <div class="counter"><span class="big">${fmt(f.receiverRounds)}</span><span class="unit">rounds fired</span></div>
+    ${gauge("Barrel clean", c.barrel)}
+    ${gauge("Deep clean", c.deep)}
+    ${(ms.due && ms.due.length) ? `<div class="tags"><span class="tag flag">${fmt(ms.due[ms.due.length - 1].rounds)} service due</span></div>`
+      : ms.next ? `<div class="tags"><span class="tag mute">next service at ${fmt(ms.next.rounds)}</span></div>` : ""}
+  </div>`;
 }
 
 ACT["gun-open"] = (id) => gunSheet(id);
@@ -1010,48 +1132,60 @@ ACT["gun-del"] = (id) => {
 "use strict";
 
 /* ============================================================ AMMO ====== */
-RENDER.ammo = function () {
-  let h = `<section class="blk"><h2>Ammunition
-    <button class="btn sm" data-act="ammo-new">Add</button></h2>`;
-  if (!S.ammo.length) return h + emptyState("Nothing on the shelf", "Add a line for each caliber, brand and bullet weight you keep.", "Add ammunition", "ammo-new") + `</section>`;
+function ammoRow(a) {
+  const ld = loadedFor(a.id);
+  const bits = [];
+  if (int(a.qtyBoxed)) bits.push(`${fmt(a.qtyBoxed)} boxed`);
+  if (int(a.qtyLoose)) bits.push(`${fmt(a.qtyLoose)} loose`);
+  if (ld) bits.push(`${fmt(ld)} in mags`);
+  return `<button class="row" data-act="ammo-open" data-id="${esc(a.id)}">
+    <span class="grow"><span class="ttl">${esc(ammoLabel(a))}</span>
+    <span class="meta">${bits.length ? esc(bits.join(" \u00b7 ")) : "empty"}${a.notes ? " \u00b7 note" : ""}</span></span>
+    <span class="num" style="font-weight:550">${fmt(onHand(a))}</span>
+    <span class="chev">&rsaquo;</span></button>`;
+}
 
+RENDER.ammo = function () {
   const boxed = S.ammo.reduce((t, a) => t + int(a.qtyBoxed), 0);
   const loose = S.ammo.reduce((t, a) => t + int(a.qtyLoose), 0);
   const inMags = S.magLoads.reduce((t, l) => t + int(l.rounds), 0);
-  h += `<div class="card"><div class="counter"><span class="big">${fmt(boxed + loose + inMags)}</span>
-    <span class="unit">rounds total</span></div>
-    <div class="split-nums">
-      <div><span>Boxed</span><b>${fmt(boxed)}</b></div>
-      <div><span>Loose</span><b>${fmt(loose)}</b></div>
-      <div><span>In mags</span><b>${fmt(inMags)}</b></div>
-      <div><span>Lines</span><b>${fmt(S.ammo.length)}</b></div>
-    </div></div>`;
-  if (AR_CALS.some((c) => calibers().includes(c))) {
-    h += `<div class="card" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
-      <div><b style="font-weight:600">AR combined</b>
-      <div class="hint" style="margin:0">.223 and 5.56 pooled, as the sheet had it</div></div>
-      <span class="num" style="font-size:1.375rem;font-weight:550">${fmt(arTotal())}</span></div>`;
-  }
-  h += `</section>`;
 
-  h += `<section class="blk"><div class="rows">`;
-  calibers().forEach((cal) => {
-    const lines = S.ammo.filter((a) => a.caliber === cal);
-    h += `<div class="grouphead"><span>${esc(cal)}</span><span class="num">${fmt(caliberTotal(cal))}</span></div>`;
-    h += lines.map((a) => {
-      const ld = loadedFor(a.id);
-      const bits = [];
-      if (int(a.qtyBoxed)) bits.push(`${fmt(a.qtyBoxed)} boxed`);
-      if (int(a.qtyLoose)) bits.push(`${fmt(a.qtyLoose)} loose`);
-      if (ld) bits.push(`${fmt(ld)} in mags`);
-      return `<button class="row" data-act="ammo-open" data-id="${esc(a.id)}">
-        <span class="grow"><span class="ttl">${esc(ammoLabel(a))}</span>
-        <span class="meta">${bits.length ? esc(bits.join(" \u00b7 ")) : "empty"}${a.notes ? " \u00b7 note" : ""}</span></span>
-        <span class="num" style="font-weight:550">${fmt(onHand(a))}</span>
-        <span class="chev">&rsaquo;</span></button>`;
-    }).join("");
+  let h = "";
+  if (S.ammo.length) {
+    h += `<section class="blk"><div class="card">
+      <div class="counter"><span class="big">${fmt(boxed + loose + inMags)}</span>
+        <span class="unit">rounds total</span></div>
+      <div class="split-nums">
+        <div><span>Boxed</span><b>${fmt(boxed)}</b></div>
+        <div><span>Loose</span><b>${fmt(loose)}</b></div>
+        <div><span>In mags</span><b>${fmt(inMags)}</b></div>
+        <div><span>Lines</span><b>${fmt(S.ammo.length)}</b></div>
+      </div></div>`;
+    if (AR_CALS.some((c) => calibers().includes(c))) {
+      h += `<div class="card" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
+        <div><b style="font-weight:600">AR combined</b>
+        <div class="hint" style="margin:0">.223 and 5.56 pooled, as the sheet had it</div></div>
+        <span class="num" style="font-size:1.375rem;font-weight:550">${fmt(arTotal())}</span></div>`;
+    }
+    h += `</section>`;
+  }
+
+  const groups = byCaliber(S.ammo, (a) => a.caliber);
+  h += treeSection({
+    scope: "ammo",
+    title: "Ammunition",
+    actions: [{ label: "Add", act: "ammo-new" }],
+    empty: emptyState("Nothing on the shelf",
+      "Add a line for each caliber, brand and bullet weight you keep.",
+      "Add ammunition", "ammo-new"),
+    branches: groups.map(([cal, items]) => ({
+      key: cal,
+      name: cal,
+      sub: `${plural(items.length, "line")} \u00b7 ${fmt(items.reduce((t, a) => t + onHand(a), 0))} rounds`,
+      count: fmt(items.reduce((t, a) => t + onHand(a), 0)),
+      body: () => `<div class="rows">${items.map(ammoRow).join("")}</div>`,
+    })),
   });
-  h += `</div></section>`;
   return h;
 };
 
@@ -1186,74 +1320,82 @@ ACT["ammo-del"] = (id) => {
 };
 
 /* ============================================================ MAGS ====== */
-RENDER.mags = function () {
-  const loaded = S.magLoads.slice().sort((a, b) => int(b.rounds) - int(a.rounds));
-  const onTrip = magsOnTrip();
-  let h = `<section class="blk"><h2>Loaded now
-    <button class="btn sm" data-act="mag-load">Load</button></h2>`;
-  if (!loaded.length) {
-    h += emptyState("No magazines loaded", "Loading moves rounds out of boxed or loose and into a magazine.", "Load magazines", "mag-load");
-  } else {
-    const tot = loaded.reduce((t, l) => t + int(l.rounds), 0);
-    h += `<p class="hint">${plural(loaded.length, "magazine")} holding ${fmt(tot)} rounds.</p>`;
-    const cals = [];
-    loaded.forEach((l) => {
-      const a = ammoOf(l.ammoId);
-      const c = a ? a.caliber : "Unknown";
-      if (!cals.includes(c)) cals.push(c);
-    });
-    h += `<div class="rows">`;
-    cals.forEach((c) => {
-      const items = loaded.filter((l) => {
-        const a = ammoOf(l.ammoId);
-        return (a ? a.caliber : "Unknown") === c;
-      });
-      h += `<div class="grouphead"><span>${esc(c)}</span>
-        <span class="num">${fmt(items.reduce((t, l) => t + int(l.rounds), 0))}</span></div>`;
-      h += items.map((l) => {
-        const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
-        const packed = onTrip.has(l.id);
-        return `<button class="row" data-act="mag-loadopen" data-id="${esc(l.id)}">
-          <span class="grow"><span class="ttl">${esc(magLabel(m))}</span>
-          <span class="meta">${esc(a ? ammoLabel(a) : "ammo line missing")}</span></span>
-          ${packed ? `<span class="tag">packed</span>` : ""}
-          ${m ? "" : `<span class="tag flag">no type</span>`}
-          <span class="num" style="font-weight:550">${fmt(l.rounds)}</span>
-          <span class="chev">&rsaquo;</span></button>`;
-      }).join("");
-    });
-    h += `</div>`;
-    const noType = loaded.filter((l) => !l.magTypeId);
-    if (noType.length) h += `<p class="hint" style="margin-top:8px">${plural(noType.length, "block")}
-      of rounds came across from the spreadsheet with no magazine type. Open one to split it
-      into real magazines.</p>`;
-  }
-  h += `</section>`;
+function magLoadRow(l, onTrip) {
+  const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
+  return `<button class="row" data-act="mag-loadopen" data-id="${esc(l.id)}">
+    <span class="grow"><span class="ttl">${esc(magLabel(m))}</span>
+    <span class="meta">${esc(a ? ammoLabel(a) : "ammo line missing")}</span></span>
+    ${onTrip.has(l.id) ? `<span class="tag">packed</span>` : ""}
+    ${m ? "" : `<span class="tag flag">no type</span>`}
+    <span class="num" style="font-weight:550">${fmt(l.rounds)}</span>
+    <span class="chev">&rsaquo;</span></button>`;
+}
 
-  h += `<section class="blk"><h2>Owned
-    <button class="btn sm" data-act="magtype-new">Add type</button></h2>`;
-  if (!S.magTypes.length) {
-    h += emptyState("No magazine types", "Add each type you own with its capacity and how many you have.", "Add a type", "magtype-new");
-  } else {
-    const groups = [];
-    S.magTypes.forEach((m) => { if (!groups.includes(m.group)) groups.push(m.group); });
-    h += `<div class="rows">`;
-    groups.forEach((g) => {
-      const items = S.magTypes.filter((m) => m.group === g);
+function magTypeRow(m) {
+  const used = magsInUse(m.id), free = magsFree(m);
+  return `<button class="row" data-act="magtype-open" data-id="${esc(m.id)}">
+    <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity
+      ? ` <span class="num" style="color:var(--ink-2);font-weight:400">${m.capacity}rd</span>` : ""}</span>
+    <span class="meta">${fmt(free)} free of ${fmt(m.quantity)}${used ? ` \u00b7 ${fmt(used)} loaded` : ""}${
+      m.capacity ? "" : " \u00b7 no capacity set"}</span></span>
+    <span class="chev">&rsaquo;</span></button>`;
+}
+
+RENDER.mags = function () {
+  const onTrip = magsOnTrip();
+  const loaded = S.magLoads.slice().sort((a, b) => int(b.rounds) - int(a.rounds));
+  const loadedGroups = byCaliber(loaded, (l) => {
+    const a = ammoOf(l.ammoId);
+    return a ? a.caliber : "Caliber not set";
+  });
+
+  let h = treeSection({
+    scope: "mags-loaded",
+    title: "Loaded now",
+    actions: [{ label: "Load", act: "mag-load" }],
+    hint: loaded.length
+      ? `${plural(loaded.length, "magazine")} holding ${fmt(loaded.reduce((t, l) => t + int(l.rounds), 0))} rounds.`
+      : "",
+    empty: emptyState("No magazines loaded",
+      "Loading moves rounds out of boxed or loose and into a magazine.",
+      "Load magazines", "mag-load"),
+    branches: loadedGroups.map(([cal, items]) => {
+      const noType = items.filter((l) => !l.magTypeId).length;
+      const packed = items.filter((l) => onTrip.has(l.id)).length;
+      return {
+        key: cal,
+        name: cal,
+        sub: `${fmt(items.reduce((t, l) => t + int(l.rounds), 0))} rounds`
+          + (packed ? ` \u00b7 ${packed} packed` : ""),
+        count: items.length,
+        tag: noType ? `<span class="tag flag">${noType} no type</span>` : "",
+        body: () => `<div class="rows">${items.map((l) => magLoadRow(l, onTrip)).join("")}</div>`,
+      };
+    }),
+  });
+
+  const ownedGroups = byCaliber(S.magTypes, (m) => m.group || "Ungrouped");
+  h += treeSection({
+    scope: "mags-owned",
+    title: "Owned",
+    actions: [{ label: "Add type", act: "magtype-new" }],
+    empty: emptyState("No magazine types",
+      "Add each type you own with its capacity and how many you have.",
+      "Add a type", "magtype-new"),
+    branches: ownedGroups.map(([cal, items]) => {
       const own = items.reduce((t, m) => t + int(m.quantity), 0);
-      h += `<div class="grouphead"><span>${esc(g || "Ungrouped")}</span>
-        <span class="num">${fmt(own)} owned</span></div>`;
-      h += items.map((m) => {
-        const used = magsInUse(m.id), free = magsFree(m);
-        return `<button class="row" data-act="magtype-open" data-id="${esc(m.id)}">
-          <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity ? ` <span class="num" style="color:var(--ink-2);font-weight:400">${m.capacity}rd</span>` : ""}</span>
-          <span class="meta">${fmt(free)} free of ${fmt(m.quantity)}${used ? ` \u00b7 ${fmt(used)} loaded` : ""}${m.capacity ? "" : " \u00b7 no capacity set"}</span></span>
-          <span class="chev">&rsaquo;</span></button>`;
-      }).join("");
-    });
-    h += `</div>`;
-  }
-  h += `</section>`;
+      const free = items.reduce((t, m) => t + magsFree(m), 0);
+      const nocap = items.filter((m) => !m.capacity).length;
+      return {
+        key: cal,
+        name: cal,
+        sub: `${fmt(own)} owned \u00b7 ${fmt(free)} free`,
+        count: items.length,
+        tag: nocap ? `<span class="tag flag">${nocap} no capacity</span>` : "",
+        body: () => `<div class="rows">${items.map(magTypeRow).join("")}</div>`,
+      };
+    }),
+  });
   return h;
 };
 
@@ -2639,7 +2781,7 @@ function syncPanel() {
 const PERSIST_ASKED = "armory.persistAsked";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-9c2755";
+const APP_VERSION = "2026.09.08-4d039e";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -3453,8 +3595,13 @@ function velCard(v) {
 }
 
 RENDER.velocity = function () {
-  let h = `<section class="blk"><h2>Velocity
-    <button class="btn sm" data-act="vel-new">Add</button></h2>
+  const allKeys = [];
+  S.velocity.forEach((v) => { const k = velKey(v); if (!allKeys.includes(k)) allKeys.push(k); });
+  const everyOpen = VEL_OPEN !== null && allKeys.length && VEL_OPEN.length >= allKeys.length;
+  let h = `<section class="blk"><h2>Velocity<span class="btnrow">
+    ${allKeys.length > 1 ? `<button class="btn sm" data-act="vel-allopen"
+      data-v="${everyOpen ? "0" : "1"}">${everyOpen ? "Collapse all" : "Expand all"}</button>` : ""}
+    <button class="btn sm" data-act="vel-new">Add</button></span></h2>
     <p class="hint">Pick a firearm to see its loads. Average tells you where a load sits;
       SD and extreme spread tell you whether it will hold at distance.</p></section>`;
   if (!S.velocity.length) return h + emptyState("No strings yet",
@@ -3514,12 +3661,6 @@ RENDER.velocity = function () {
     }).join("");
   });
   h += `</div></section>`;
-
-  if (branches.length > 1) {
-    const allOpen = VEL_OPEN.length >= branches.length;
-    h += `<section class="blk"><button class="btn wide" data-act="vel-allopen"
-      data-v="${allOpen ? "0" : "1"}">${allOpen ? "Collapse all" : "Expand all"}</button></section>`;
-  }
 
   h += `<section class="blk"><button class="btn wide" data-act="vel-export">Export velocity data</button>
     <p class="hint" style="margin-top:8px">JSON with shots and stats per string, for MSDope
