@@ -345,6 +345,7 @@ function load() {
 function migrate(st) {
   st.schemaVersion = st.schemaVersion || 1;
   if (st.rev == null) st.rev = 0;
+  if (!Array.isArray(st.caliberOrder)) st.caliberOrder = [];
   if (!st.deviceName && typeof defaultDeviceName === "function") st.deviceName = defaultDeviceName();
   const arrays = ["firearms", "ammo", "magTypes", "magLoads", "trips",
                   "velocity", "nfa", "containers", "schedules", "ledger", "docs"];
@@ -747,15 +748,89 @@ function treeSection(o) {
   return h;
 }
 
-/* Order calibers the way the inventory does, so the same caliber sits in the
-   same place on every screen. */
-function caliberOrder() {
+/* Every caliber that actually appears somewhere in the inventory. */
+function presentCalibers() {
   const order = [];
-  S.firearms.forEach((f) => { const c = f.caliber || "Caliber not set"; if (!order.includes(c)) order.push(c); });
-  S.ammo.forEach((a) => { const c = a.caliber || "Caliber not set"; if (!order.includes(c)) order.push(c); });
-  S.magTypes.forEach((m) => { const c = m.group || "Ungrouped"; if (!order.includes(c)) order.push(c); });
+  const add = (c) => { const k = c || "Caliber not set"; if (!order.includes(k)) order.push(k); };
+  S.firearms.forEach((f) => add(f.caliber));
+  S.ammo.forEach((a) => add(a.caliber));
+  S.magTypes.forEach((m) => add(m.group || "Ungrouped"));
   return order;
 }
+
+/* The order calibers appear in, the same on every screen. A saved arrangement
+   comes first; anything present but not in it is appended rather than hidden,
+   so adding a new caliber can never make it invisible. */
+function caliberOrder() {
+  const present = presentCalibers();
+  const saved = Array.isArray(S.caliberOrder) ? S.caliberOrder : [];
+  const out = saved.filter((c) => present.includes(c));
+  present.forEach((c) => { if (!out.includes(c)) out.push(c); });
+  return out;
+}
+
+function caliberUse(cal) {
+  return {
+    guns: S.firearms.filter((f) => (f.caliber || "Caliber not set") === cal).length,
+    ammo: S.ammo.filter((a) => (a.caliber || "Caliber not set") === cal).length,
+    mags: S.magTypes.filter((m) => (m.group || "Ungrouped") === cal).length,
+  };
+}
+
+/* Unlike which branches are open, the arrangement is a deliberate choice worth
+   carrying between devices, so it lives in S and syncs. */
+ACT["cal-order"] = () => calOrderSheet();
+
+function calOrderSheet() {
+  const order = caliberOrder();
+  const saved = Array.isArray(S.caliberOrder) && S.caliberOrder.length;
+  openSheet("Caliber order", `
+    <p class="hint">Sets the order on Firearms, Ammunition and Magazines, and the caliber
+      headings on Velocity. Syncs to your other devices.</p>
+    <div class="rows">${order.map((cal, i) => {
+      const u = caliberUse(cal);
+      const bits = [
+        u.guns ? plural(u.guns, "firearm") : null,
+        u.ammo ? `${plural(u.ammo, "line")} of ammo` : null,
+        u.mags ? `${plural(u.mags, "mag type")}` : null,
+      ].filter(Boolean);
+      return `<div class="row" style="gap:8px">
+        <span class="grow"><span class="ttl">${esc(cal)}</span>
+        <span class="meta">${bits.length ? esc(bits.join(" \u00b7 ")) : "nothing yet"}</span></span>
+        <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="top"
+          ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(cal)} to the top">Top</button>
+        <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="-1"
+          ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(cal)} up">&uarr;</button>
+        <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="1"
+          ${i === order.length - 1 ? "disabled" : ""} aria-label="Move ${esc(cal)} down">&darr;</button>
+      </div>`;
+    }).join("")}</div>
+    ${saved ? `<button class="btn wide" style="margin-top:10px" data-act="cal-reset">Back to the default order</button>` : ""}
+    <button class="btn pri wide" style="margin-top:8px" data-act="sheet-close">Done</button>`);
+}
+
+ACT["cal-move"] = (cal, dir) => {
+  /* Materialise the full current order first, so a partial saved list cannot
+     drop the calibers it never mentioned. */
+  const order = caliberOrder();
+  const from = order.indexOf(cal);
+  if (from < 0) return;
+  order.splice(from, 1);
+  if (dir === "top") order.unshift(cal);
+  else order.splice(Math.max(0, Math.min(order.length, from + int(dir))), 0, cal);
+  S.caliberOrder = order;
+  save();
+  render();
+  calOrderSheet();
+};
+
+ACT["cal-reset"] = () => {
+  S.caliberOrder = [];
+  save();
+  render();
+  calOrderSheet();
+  toast("Back to the default order.");
+};
 
 function byCaliber(items, get) {
   const map = {};
@@ -879,7 +954,7 @@ RENDER.guns = function () {
   return treeSection({
     scope: "guns",
     title: "Firearms",
-    actions: [{ label: "Add", act: "gun-new" }],
+    actions: [{ label: "Order", act: "cal-order" }, { label: "Add", act: "gun-new" }],
     empty: emptyState("No firearms yet", "Add one to start counting rounds.",
       "Add a firearm", "gun-new"),
     branches: groups.map(([cal, items]) => {
@@ -1174,7 +1249,7 @@ RENDER.ammo = function () {
   h += treeSection({
     scope: "ammo",
     title: "Ammunition",
-    actions: [{ label: "Add", act: "ammo-new" }],
+    actions: [{ label: "Order", act: "cal-order" }, { label: "Add", act: "ammo-new" }],
     empty: emptyState("Nothing on the shelf",
       "Add a line for each caliber, brand and bullet weight you keep.",
       "Add ammunition", "ammo-new"),
@@ -1352,7 +1427,7 @@ RENDER.mags = function () {
   let h = treeSection({
     scope: "mags-loaded",
     title: "Loaded now",
-    actions: [{ label: "Load", act: "mag-load" }],
+    actions: [{ label: "Order", act: "cal-order" }, { label: "Load", act: "mag-load" }],
     hint: loaded.length
       ? `${plural(loaded.length, "magazine")} holding ${fmt(loaded.reduce((t, l) => t + int(l.rounds), 0))} rounds.`
       : "",
@@ -2781,7 +2856,7 @@ function syncPanel() {
 const PERSIST_ASKED = "armory.persistAsked";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-4d039e";
+const APP_VERSION = "2026.09.08-0bed1c";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -3631,6 +3706,12 @@ RENDER.velocity = function () {
 
   const cals = [];
   branches.forEach((b) => { if (!cals.includes(b.caliber)) cals.push(b.caliber); });
+  /* Follow the arrangement set on the other screens. */
+  const pref = caliberOrder();
+  cals.sort((a, b) => {
+    const ia = pref.indexOf(a), ib = pref.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
 
   h += `<section class="blk"><div class="tree">`;
   cals.forEach((cal) => {

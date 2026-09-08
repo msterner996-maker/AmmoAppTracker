@@ -1,7 +1,7 @@
 /* Cache the shell so the app opens with no network.
    CACHE is stamped by the build, so it changes whenever the app does and the old
    cache is dropped on activate. Nothing to remember on deploy. */
-const CACHE = "armory-2026.09.08-4d039e";
+const CACHE = "armory-2026.09.08-0bed1c";
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (e) => {
