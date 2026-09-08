@@ -1,0 +1,19 @@
+{
+ "name": "Armory",
+ "short_name": "Armory",
+ "start_url": ".",
+ "scope": ".",
+ "display": "standalone",
+ "orientation": "portrait",
+ "background_color": "#F2F1ED",
+ "theme_color": "#F2F1ED",
+ "description": "Firearm, ammunition, magazine and range-trip log. Data stays on the device.",
+ "icons": [
+  {
+   "src": "icon.svg",
+   "sizes": "any",
+   "type": "image/svg+xml",
+   "purpose": "any maskable"
+  }
+ ]
+}

@@ -243,6 +243,11 @@ dl{margin:0}
 .node.open .tw{transform:rotate(90deg);color:var(--brass)}
 .nodebody{padding:12px;border-top:1px solid var(--rule);background:var(--card-2)}
 .nodebody>.rows{border-color:var(--rule)}
+.tree.inner{border:1px solid var(--rule);border-radius:8px;background:var(--card)}
+.nodehead.sub{padding:11px 12px;min-height:48px}
+.nodehead.sub .nm b{font-size:0.9375rem;font-weight:600}
+.node.open>.nodehead.sub{background:var(--card-2)}
+.tree.inner .nodebody{padding:10px;background:var(--field)}
 .nodebody>.rows .row:first-child{border-top:0}
 .nodebody>.card:last-child{margin-bottom:0}
 @media (prefers-reduced-motion:reduce){ .tw{transition:none} }
@@ -396,6 +401,35 @@ function migrate(st) {
   st.schemaVersion = st.schemaVersion || 1;
   if (st.rev == null) st.rev = 0;
   if (!Array.isArray(st.caliberOrder)) st.caliberOrder = [];
+  /* Custom names for individual magazines, keyed by unit id. Only overrides are
+     stored; an unnamed magazine is "<type label> <number>" and costs nothing. */
+  if (!st.magNames || typeof st.magNames !== "object") st.magNames = {};
+
+  /* Schema 2: one magazine group holds both 5.56 and .223. */
+  if (int(st.schemaVersion) < 2) {
+    (st.magTypes || []).forEach((m) => {
+      if (String(m.group || "").trim() === "5.56") m.group = "5.56/.223";
+    });
+    st.schemaVersion = 2;
+  }
+
+  /* Bind existing loaded magazines to specific units. Unit ids are derived from
+     the type id and the number rather than generated, so two devices doing this
+     independently produce identical ids and the result merges instead of
+     duplicating. */
+  (st.magTypes || []).forEach((m) => {
+    const mine = (st.magLoads || []).filter((l) => l.magTypeId === m.id);
+    const taken = new Set(mine.map((l) => l.magUnitId).filter(Boolean));
+    let n = 1;
+    mine.forEach((l) => {
+      if (l.magUnitId) return;
+      while (n <= int(m.quantity) && taken.has(m.id + "#" + n)) n++;
+      if (n > int(m.quantity)) return;      // more loads than magazines owned
+      l.magUnitId = m.id + "#" + n;
+      taken.add(l.magUnitId);
+      n++;
+    });
+  });
   if (!st.deviceName && typeof defaultDeviceName === "function") st.deviceName = defaultDeviceName();
   const arrays = ["firearms", "ammo", "magTypes", "magLoads", "trips",
                   "velocity", "nfa", "containers", "schedules", "ledger", "docs"];
@@ -804,7 +838,17 @@ function presentCalibers() {
   const add = (c) => { const k = c || "Caliber not set"; if (!order.includes(k)) order.push(k); };
   S.firearms.forEach((f) => add(f.caliber));
   S.ammo.forEach((a) => add(a.caliber));
-  S.magTypes.forEach((m) => add(m.group || "Ungrouped"));
+  const fromMags = [];
+  S.magTypes.forEach((m) => {
+    const g = m.group || "Ungrouped";
+    if (!fromMags.includes(g)) fromMags.push(g);
+  });
+  fromMags.forEach((g) => {
+    const parts = g.split("/").map((x) => x.trim()).filter(Boolean);
+    /* "5.56/.223" needs no row of its own once both parts are listed. */
+    const covered = parts.length > 1 && parts.every((x) => order.includes(x));
+    if (!covered) add(g);
+  });
   return order;
 }
 
@@ -882,13 +926,27 @@ ACT["cal-reset"] = () => {
   toast("Back to the default order.");
 };
 
+/* A compound label like "5.56/.223" is ranked by its best-placed part, so a
+   magazine group sits next to the caliber it feeds rather than at the end. */
+function caliberRank(label) {
+  const order = caliberOrder();
+  const direct = order.indexOf(label);
+  if (direct >= 0) return direct;
+  const parts = String(label || "").split("/").map((x) => x.trim()).filter(Boolean);
+  const ranks = parts.map((x) => order.indexOf(x)).filter((i) => i >= 0);
+  return ranks.length ? Math.min.apply(null, ranks) : 9999;
+}
+
 function byCaliber(items, get) {
-  const map = {};
+  const map = {}, keys = [];
   items.forEach((x) => {
     const c = get(x) || "Caliber not set";
-    (map[c] = map[c] || []).push(x);
+    if (!map[c]) { map[c] = []; keys.push(c); }
+    map[c].push(x);
   });
-  return caliberOrder().filter((c) => map[c] && map[c].length).map((c) => [c, map[c]]);
+  /* Sorted, never filtered: a label absent from the saved order must still show. */
+  keys.sort((a, b) => caliberRank(a) - caliberRank(b) || a.localeCompare(b));
+  return keys.map((c) => [c, map[c]]);
 }
 </script>
 <script>
@@ -1446,10 +1504,54 @@ ACT["ammo-del"] = (id) => {
 };
 
 /* ============================================================ MAGS ====== */
+/* A group label can cover more than one caliber: "5.56/.223" fits both, because
+   the magazine does. Matching splits on the slash rather than comparing strings. */
+function groupCals(group) {
+  return String(group || "").split("/").map((x) => x.trim()).filter(Boolean);
+}
+function groupFits(group, caliber) {
+  const gs = groupCals(group);
+  return gs.length ? gs.indexOf(caliber) >= 0 : false;
+}
+
+const unitId = (typeId, num) => typeId + "#" + num;
+
+/* Magazines are derived from the type's quantity rather than stored one by one.
+   Change the quantity and the numbers follow; only custom names are persisted. */
+function unitsFor(m) {
+  const out = [];
+  for (let i = 1; i <= int(m.quantity); i++) {
+    const id = unitId(m.id, i);
+    const custom = S.magNames ? S.magNames[id] : null;
+    out.push({ id, magTypeId: m.id, num: i, custom: !!custom,
+      name: custom || `${m.label} ${i}` });
+  }
+  return out;
+}
+function unitOf(id) {
+  const typeId = String(id || "").split("#")[0];
+  const m = magType(typeId);
+  if (!m) return null;
+  return unitsFor(m).find((u) => u.id === id) || null;
+}
+const loadOfUnit = (uid) => S.magLoads.find((l) => l.magUnitId === uid) || null;
+function freeUnits(m) { return unitsFor(m).filter((u) => !loadOfUnit(u.id)); }
+
+/* What to call a loaded magazine: its own name if it has a unit, else the type. */
+function loadName(l) {
+  if (!l) return "Unassigned";
+  if (l.magUnitId) {
+    const u = unitOf(l.magUnitId);
+    if (u) return u.name;
+  }
+  const m = magType(l.magTypeId);
+  return m ? magLabel(m) : "Unassigned magazines";
+}
+
 function magLoadRow(l, onTrip) {
   const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
   return `<button class="row" data-act="mag-loadopen" data-id="${esc(l.id)}">
-    <span class="grow"><span class="ttl">${esc(magLabel(m))}</span>
+    <span class="grow"><span class="ttl">${esc(loadName(l))}</span>
     <span class="meta">${esc(a ? ammoLabel(a) : "ammo line missing")}</span></span>
     ${onTrip.has(l.id) ? `<span class="tag">packed</span>` : ""}
     ${m ? "" : `<span class="tag flag">no type</span>`}
@@ -1457,15 +1559,175 @@ function magLoadRow(l, onTrip) {
     <span class="chev">&rsaquo;</span></button>`;
 }
 
-function magTypeRow(m) {
-  const used = magsInUse(m.id), free = magsFree(m);
-  return `<button class="row" data-act="magtype-open" data-id="${esc(m.id)}">
-    <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity
-      ? ` <span class="num" style="color:var(--ink-2);font-weight:400">${m.capacity}rd</span>` : ""}</span>
-    <span class="meta">${fmt(free)} free of ${fmt(m.quantity)}${used ? ` \u00b7 ${fmt(used)} loaded` : ""}${
-      m.capacity ? "" : " \u00b7 no capacity set"}</span></span>
-    <span class="chev">&rsaquo;</span></button>`;
+/* A magazine type is itself a branch: open it to see the individual magazines,
+   what is in each, and rename them. */
+function magTypeNode(m) {
+  const open = (openFor("mags-type") || []).indexOf(m.id) >= 0;
+  const units = unitsFor(m);
+  const loads = units.map((u) => loadOfUnit(u.id));
+  const nLoaded = loads.filter(Boolean).length;
+  const rounds = loads.reduce((t, l) => t + (l ? int(l.rounds) : 0), 0);
+  const orphans = S.magLoads.filter((l) => l.magTypeId === m.id && !l.magUnitId);
+  const named = units.filter((u) => u.custom).length;
+
+  const sub = [
+    `${fmt(units.length - nLoaded)} free of ${fmt(units.length)}`,
+    rounds ? `${fmt(rounds)} rounds` : null,
+    m.capacity ? null : "no capacity set",
+  ].filter(Boolean).join(" \u00b7 ");
+
+  return `<div class="node${open ? " open" : ""}">
+    <button class="nodehead sub" data-act="tree-toggle" data-id="${esc(m.id)}"
+      data-v="mags-type" aria-expanded="${open}">
+      <span class="tw">&rsaquo;</span>
+      <span class="nm"><b>${esc(m.label)}${m.capacity
+        ? ` <span class="num" style="font-weight:400;color:var(--ink-2)">${m.capacity}rd</span>` : ""}</b>
+        <span>${esc(sub)}</span></span>
+      ${m.capacity ? "" : `<span class="tag flag">capacity</span>`}
+      <span class="ct">${fmt(units.length)}</span>
+    </button>
+    ${open ? `<div class="nodebody">
+      ${units.length ? `<div class="rows">${units.map((u) => {
+        const l = loadOfUnit(u.id);
+        const a = l ? ammoOf(l.ammoId) : null;
+        const packed = l && magsOnTrip().has(l.id);
+        return `<button class="row" data-act="unit-open" data-id="${esc(u.id)}">
+          <span class="grow"><span class="ttl">${esc(u.name)}</span>
+          <span class="meta">${l
+            ? esc(a ? ammoFull(a) : "ammo line missing")
+            : "empty"}</span></span>
+          ${packed ? `<span class="tag">packed</span>` : ""}
+          ${u.custom ? `<span class="tag mute">named</span>` : ""}
+          <span class="num" style="font-weight:550">${l ? fmt(l.rounds) : "\u2014"}</span>
+          <span class="chev">&rsaquo;</span></button>`;
+      }).join("")}</div>` : `<div class="empty">Quantity is zero, so there are no
+        magazines to list. Set how many you own under Edit type.</div>`}
+      ${orphans.length ? `<p class="hint" style="margin:10px 0 0">${plural(orphans.length, "loaded block")}
+        of this type ${orphans.length === 1 ? "is" : "are"} not tied to a numbered magazine,
+        which happens when more are loaded than you own. Raise the quantity or unload one.</p>` : ""}
+      <div class="btnrow" style="margin-top:10px">
+        <button class="btn sm" data-act="magtype-open" data-id="${esc(m.id)}">Edit type</button>
+        ${named ? `<button class="btn sm" data-act="unit-names-reset" data-id="${esc(m.id)}">Clear custom names</button>` : ""}
+      </div>
+    </div>` : ""}</div>`;
 }
+
+/* ---- one magazine ---- */
+ACT["unit-open"] = (id) => unitSheet(id);
+
+function unitSheet(id) {
+  const u = unitOf(id);
+  if (!u) { closeSheet(); return; }
+  const m = magType(u.magTypeId);
+  const l = loadOfUnit(id);
+  const a = l ? ammoOf(l.ammoId) : null;
+  const packed = l && magsOnTrip().has(l.id);
+
+  let h = `${packed ? `<div class="note">Packed for the open trip.</div>` : ""}
+    <dl class="card">
+      <div class="kv"><dt>Type</dt><dd style="font-family:var(--sans)">${esc(magLabel(m))}</dd></div>
+      <div class="kv"><dt>Fits</dt><dd style="font-family:var(--sans)">${esc(m.group || "unset")}</dd></div>
+      <div class="kv"><dt>Contents</dt><dd style="font-family:var(--sans)">${
+        l ? esc(ammoFull(a)) : "empty"}</dd></div>
+      ${l ? `<div class="kv"><dt>Rounds</dt><dd>${fmt(l.rounds)}${
+        m.capacity ? ` of ${m.capacity}` : ""}</dd></div>
+      <div class="kv"><dt>Loaded on</dt><dd>${esc(dshow(l.loadedOn))}</dd></div>` : ""}
+    </dl>
+
+    <label class="f" style="margin-top:12px"><span>Name</span>
+      <input name="nm" value="${esc(u.name)}" placeholder="${esc(m.label + " " + u.num)}"></label>
+    <div class="btnrow" style="margin-bottom:14px">
+      <button class="btn sm" data-act="unit-rename" data-id="${esc(id)}">Save name</button>
+      ${u.custom ? `<button class="btn sm" data-act="unit-rename-clear" data-id="${esc(id)}">Back to default</button>` : ""}
+    </div>`;
+
+  if (l) {
+    h += `<label class="f"><span>Correct the round count</span>${stepper("rounds", l.rounds, 0)}</label>
+      <div class="btnrow split">
+        <button class="btn" data-act="mag-loadsave" data-id="${esc(l.id)}">Save rounds</button>
+        <button class="btn pri" data-act="mag-unload" data-id="${esc(l.id)}">Unload</button>
+      </div>`;
+  } else {
+    h += `<button class="btn pri wide" data-act="unit-load" data-id="${esc(id)}">Load this magazine</button>`;
+  }
+  openSheet(u.name, h);
+}
+
+ACT["unit-rename"] = (id) => {
+  const u = unitOf(id);
+  const m = magType(u.magTypeId);
+  const v = readForm($("#sheetbody"));
+  const nm = String(v.nm || "").trim().slice(0, 60);
+  snapshot("rename magazine");
+  S.magNames = S.magNames || {};
+  /* Typing the default back in is the same as having no custom name. */
+  if (!nm || nm === `${m.label} ${u.num}`) delete S.magNames[id];
+  else S.magNames[id] = nm;
+  save(); render();
+  unitSheet(id);
+};
+
+ACT["unit-rename-clear"] = (id) => {
+  snapshot("clear magazine name");
+  if (S.magNames) delete S.magNames[id];
+  save(); render();
+  unitSheet(id);
+};
+
+ACT["unit-names-reset"] = (typeId) => {
+  const m = magType(typeId);
+  const n = unitsFor(m).filter((u) => u.custom).length;
+  if (!n) return;
+  if (!confirm(`Clear ${plural(n, "custom name")} on ${m.label}?`)) return;
+  snapshot("clear names on " + m.label);
+  Object.keys(S.magNames || {}).forEach((k) => {
+    if (k.split("#")[0] === typeId) delete S.magNames[k];
+  });
+  commit("Names cleared.");
+};
+
+ACT["unit-load"] = (id) => {
+  const u = unitOf(id);
+  const m = magType(u.magTypeId);
+  const cals = groupCals(m.group);
+  let pool = S.ammo.filter((a) => cals.indexOf(a.caliber) >= 0
+    && int(a.qtyBoxed) + int(a.qtyLoose) > 0);
+  if (!pool.length) pool = S.ammo.filter((a) => int(a.qtyBoxed) + int(a.qtyLoose) > 0);
+  if (!pool.length) {
+    openSheet("Nothing to load", `<div class="note flag">No ammunition line has any
+      boxed or loose rounds to put in a magazine.</div>
+      <button class="btn wide" data-act="sheet-close">Close</button>`);
+    return;
+  }
+  const a = pool[0];
+  openSheet("Load " + u.name, `
+    <label class="f"><span>Ammunition</span>
+      <select name="ammoId">${selOptsGrouped(pool, a.id, ammoLabel, (x) => x.caliber)}</select></label>
+    <label class="f"><span>Rounds</span>${stepper("rounds", m.capacity || 30, 1)}</label>
+    <label class="f"><span>Take from</span><select name="src">
+      <option value="loose">Loose</option><option value="boxed">Boxed</option></select></label>
+    <button class="btn pri wide" data-act="unit-load-go" data-id="${esc(id)}">Load</button>`);
+};
+
+ACT["unit-load-go"] = (id) => {
+  const u = unitOf(id);
+  const m = magType(u.magTypeId);
+  const v = readForm($("#sheetbody"));
+  const a = ammoOf(v.ammoId);
+  const rounds = int(v.rounds);
+  if (!a || rounds <= 0) { toast("Pick ammunition and a round count."); return; }
+  if (m.capacity && rounds > m.capacity) { toast(`A ${m.label} holds ${m.capacity}.`); return; }
+  if (loadOfUnit(id)) { toast("That magazine is already loaded."); return; }
+  const have = v.src === "boxed" ? int(a.qtyBoxed) : int(a.qtyLoose);
+  if (rounds > have) { toast(`Only ${fmt(have)} ${v.src}.`); return; }
+  snapshot("load " + u.name);
+  if (v.src === "boxed") a.qtyBoxed = int(a.qtyBoxed) - rounds;
+  else a.qtyLoose = int(a.qtyLoose) - rounds;
+  S.magLoads.push({ id: uid("ml"), magTypeId: m.id, magUnitId: id,
+    ammoId: a.id, rounds, loadedOn: today(), notes: "" });
+  commit(`${u.name} loaded with ${fmt(rounds)}.`);
+  closeSheet();
+};
 
 RENDER.mags = function () {
   const onTrip = magsOnTrip();
@@ -1518,7 +1780,7 @@ RENDER.mags = function () {
         sub: `${fmt(own)} owned \u00b7 ${fmt(free)} free`,
         count: items.length,
         tag: nocap ? `<span class="tag flag">${nocap} no capacity</span>` : "",
-        body: () => `<div class="rows">${items.map(magTypeRow).join("")}</div>`,
+        body: () => `<div class="tree inner">${items.map(magTypeNode).join("")}</div>`,
       };
     }),
   });
@@ -1535,7 +1797,7 @@ ACT["mag-load"] = (ammoId) => {
 function magLoadForm(ammoId) {
   const a = ammoOf(ammoId);
   const avail = S.magTypes.filter((m) => magsFree(m) > 0);
-  const pool = avail.filter((m) => m.group === a.caliber);
+  const pool = avail.filter((m) => groupFits(m.group, a.caliber));
   const list = pool.length ? pool : avail;
   const def = list[0];
   openSheet("Load magazines", `
@@ -1587,8 +1849,10 @@ ACT["mag-load-go"] = () => {
   snapshot(`load ${count}\u00d7 ${m.label}`);
   if (v.src === "boxed") a.qtyBoxed = int(a.qtyBoxed) - need;
   else a.qtyLoose = int(a.qtyLoose) - need;
+  const free = freeUnits(m);
   for (let i = 0; i < count; i++) {
-    S.magLoads.push({ id: uid("ml"), magTypeId: m.id, ammoId: a.id,
+    S.magLoads.push({ id: uid("ml"), magTypeId: m.id,
+      magUnitId: free[i] ? free[i].id : null, ammoId: a.id,
       rounds: each, loadedOn: today(), notes: "" });
   }
   commit(`${plural(count, "magazine")} loaded with ${fmt(need)} rounds.`);
@@ -1601,7 +1865,7 @@ ACT["mag-loadopen"] = (id) => {
   const m = magType(l.magTypeId), a = ammoOf(l.ammoId);
   const packed = magsOnTrip().has(l.id);
   const free = S.magTypes.filter((x) => magsFree(x) > 0 || x.id === l.magTypeId);
-  openSheet(magLabel(m), `
+  openSheet(loadName(l), `
     ${packed ? `<div class="note">This magazine is packed for the open trip. Changing it
       here will not match what you carried.</div>` : ""}
     ${l.notes ? `<div class="note">${esc(l.notes)}</div>` : ""}
@@ -1659,7 +1923,7 @@ ACT["mag-split"] = (id) => {
   if (!l) return;
   const a = ammoOf(l.ammoId);
   const cal = a ? a.caliber : "";
-  let pool = S.magTypes.filter((m) => magsFree(m) > 0 && m.group === cal);
+  let pool = S.magTypes.filter((m) => magsFree(m) > 0 && groupFits(m.group, cal));
   if (!pool.length) pool = S.magTypes.filter((m) => magsFree(m) > 0);
   if (!pool.length) {
     openSheet("No free magazines", `<div class="note flag">Every magazine you own is
@@ -1731,11 +1995,12 @@ ACT["mag-split-go"] = (id) => {
   const made = [];
   for (let i = 0; i < full; i++) made.push(each);
   if (rem) made.push(rem);
-  made.forEach((r) => S.magLoads.push({
-    id: uid("ml"), magTypeId: m.id, ammoId: l.ammoId,
-    rounds: r, loadedOn: l.loadedOn || null, notes: "",
-  }));
   S.magLoads = S.magLoads.filter((x) => x.id !== id);
+  const spare = freeUnits(m);
+  made.forEach((r, i) => S.magLoads.push({
+    id: uid("ml"), magTypeId: m.id, magUnitId: spare[i] ? spare[i].id : null,
+    ammoId: l.ammoId, rounds: r, loadedOn: l.loadedOn || null, notes: "",
+  }));
   commit(`Split into ${plural(made.length, "magazine")}.`); closeSheet();
 };
 
@@ -1784,6 +2049,9 @@ ACT["magtype-del"] = (id) => {
   if (!confirm(`Delete ${m.label}?`)) return;
   snapshot("delete " + m.label);
   S.magTypes = S.magTypes.filter((x) => x.id !== id);
+  Object.keys(S.magNames || {}).forEach((k) => {
+    if (k.split("#")[0] === id) delete S.magNames[k];
+  });
   commit("Deleted."); closeSheet();
 };
 </script>
@@ -1980,6 +2248,9 @@ function entryForm(entryId, override) {
       ${buckets.length ? buckets.map((b) => {
         const m = b.magTypeId ? magType(b.magTypeId) : null;
         const sel = b.loads.filter((x) => chosen.has(x)).length;
+        const namedInBucket = b.loads.map((x) => byId(S.magLoads, x))
+          .filter((x) => x && x.magUnitId && unitOf(x.magUnitId) && unitOf(x.magUnitId).custom)
+          .map((x) => unitOf(x.magUnitId).name);
         return `<div class="bucket">
           <div class="top">
             <b>${esc(m ? magLabel(m) : "Unassigned magazines")}</b>
@@ -1989,6 +2260,8 @@ function entryForm(entryId, override) {
             ${stepper("bk_" + b.key, sel, 0)}
             <span class="of">of ${plural(b.loads.length, "mag")} loaded</span>
           </div>
+          ${namedInBucket.length ? `<div class="hint" style="margin:6px 0 0">Takes from:
+            ${esc(namedInBucket.slice(0, 4).join(", "))}${namedInBucket.length > 4 ? "\u2026" : ""}</div>` : ""}
           ${m ? "" : `<div class="hint" style="margin:6px 0 0">Carried over from the
             spreadsheet with no magazine type. <button class="linkbtn"
             data-act="mag-split" data-id="${esc(b.loads[0])}">Split into real magazines</button></div>`}
@@ -2026,7 +2299,7 @@ ACT["entry-save"] = (entryId) => {
   const mags = readChosenMags(entryId || null, v.ammoId, v)
     .map((mlid) => {
       const l = byId(S.magLoads, mlid);
-      return l ? { magLoadId: l.id, magTypeId: l.magTypeId,
+      return l ? { magLoadId: l.id, magTypeId: l.magTypeId, magUnitId: l.magUnitId || null,
         roundsOut: int(l.rounds), roundsBack: int(l.rounds) } : null;
     }).filter(Boolean);
 
@@ -2096,10 +2369,11 @@ function rangeCloseout(t) {
 
       ${(e.mags || []).length ? `<fieldset><legend>Rounds left in each magazine</legend>
         ${e.mags.map((g, i) => {
-          const m = magType(g.magTypeId);
+          const nm = (g.magUnitId && unitOf(g.magUnitId)) ? unitOf(g.magUnitId).name
+            : magLabel(magType(g.magTypeId));
           return `<div style="padding:10px 0;border-top:1px solid var(--rule-2)">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
-              <b style="font-weight:550;font-size:0.875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(magLabel(m))}</b>
+              <b style="font-weight:550;font-size:0.875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nm)}</b>
               <span class="num" style="color:var(--ink-2);font-size:0.75rem;flex:none">took ${fmt(g.roundsOut)}</span>
             </div>
             <div style="display:flex;gap:8px;margin-top:7px">
@@ -2107,7 +2381,7 @@ function rangeCloseout(t) {
               <button class="btn sm" data-act="co-set" data-id="${esc(e.id)}" data-v="${i}:full">Untouched</button>
               <input type="number" inputmode="numeric" style="flex:1;min-width:64px;text-align:center;min-height:34px;padding:4px 8px"
                 data-e="${esc(e.id)}" data-mag="${i}" value="${int(g.roundsBack)}" min="0" max="${int(g.roundsOut)}"
-                aria-label="Rounds left in ${esc(magLabel(m))}">
+                aria-label="Rounds left in ${esc(nm)}">
             </div></div>`;
         }).join("")}
         <div class="btnrow" style="margin-top:10px">
@@ -2908,7 +3182,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-3b194f";
+const APP_VERSION = "2026.09.08-faa500";
 
 function plat() {
   const ua = navigator.userAgent || "";
