@@ -199,6 +199,28 @@ dl{margin:0}
 .stripe{display:flex;gap:2px;margin-top:8px;align-items:flex-end;height:34px}
 .stripe i{flex:1;background:var(--brass-soft);border-radius:1px 1px 0 0;min-height:2px}
 .stripe i.hi{background:var(--brass)}
+.tree{border:1px solid var(--rule);border-radius:var(--r);background:var(--card);overflow:hidden}
+.node{border-top:1px solid var(--rule-2)}
+.tree>.node:first-child{border-top:0}
+.nodehead{display:flex;align-items:center;gap:11px;width:100%;padding:14px;
+  background:none;border:0;text-align:left;min-height:56px}
+.nodehead:active{background:var(--zebra)}
+.node.alt>.nodehead{background:var(--zebra)}
+.node.alt>.nodehead:active{background:#DEDBD1}
+.node.open>.nodehead{background:var(--brass-soft)}
+.nodehead .nm{flex:1;min-width:0}
+.nodehead .nm b{display:block;font-size:1.0625rem;font-weight:650;letter-spacing:-0.012em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nodehead .nm span{display:block;font-size:0.8125rem;color:var(--ink-2)}
+.nodehead .ct{flex:none;font-size:0.75rem;font-weight:600;color:var(--brass);
+  background:var(--card);border:1px solid var(--rule);border-radius:999px;padding:2px 9px}
+.node.open .nodehead .ct{background:var(--card)}
+.tw{flex:none;width:16px;text-align:center;color:var(--ink-3);font-size:1.1rem;
+  line-height:1;transition:transform .16s}
+.node.open .tw{transform:rotate(90deg);color:var(--brass)}
+.nodebody{padding:12px;border-top:1px solid var(--rule);background:var(--card-2)}
+.nodebody>.card:last-child{margin-bottom:0}
+@media (prefers-reduced-motion:reduce){ .tw{transition:none} }
 .calhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
   font-size:1.125rem;font-weight:700;letter-spacing:-0.015em;
   margin:22px 0 9px;padding-bottom:6px;border-bottom:2px solid var(--brass)}
@@ -258,9 +280,11 @@ dl{margin:0}
   <div class="body" id="sheetbody"></div>
 </div>
 
+<input type="file" id="docfile" accept="application/pdf,.pdf" class="sr">
+
 <div class="toast" id="toast"><span id="toastmsg"></span><button id="toastact" hidden></button></div>
 <script>
-const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads":[],"trips":[],"velocity":[],"nfa":[],"ledger":[],"containers":[],"schedules":[{"id":"sched-ar","name":"AR maintenance","milestones":[{"rounds":5000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":7500,"task":"Extractor, extractor springs, gas rings."},{"rounds":10000,"task":"Replace BCG and buffer spring. Check barrel accuracy."},{"rounds":12500,"task":"Extractor, extractor springs, gas rings."},{"rounds":15000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":17500,"task":"Extractor, extractor springs, gas rings."},{"rounds":20000,"task":"Replace BCG, buffer spring, and barrel. Inspect the rifle thoroughly."}]}],"rev":0};
+const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads":[],"trips":[],"velocity":[],"nfa":[],"ledger":[],"containers":[],"schedules":[{"id":"sched-ar","name":"AR maintenance","milestones":[{"rounds":5000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":7500,"task":"Extractor, extractor springs, gas rings."},{"rounds":10000,"task":"Replace BCG and buffer spring. Check barrel accuracy."},{"rounds":12500,"task":"Extractor, extractor springs, gas rings."},{"rounds":15000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":17500,"task":"Extractor, extractor springs, gas rings."},{"rounds":20000,"task":"Replace BCG, buffer spring, and barrel. Inspect the rifle thoroughly."}]}],"docs":[],"rev":0};
 </script>
 <script>
 "use strict";
@@ -315,7 +339,7 @@ function migrate(st) {
   if (st.rev == null) st.rev = 0;
   if (!st.deviceName && typeof defaultDeviceName === "function") st.deviceName = defaultDeviceName();
   const arrays = ["firearms", "ammo", "magTypes", "magLoads", "trips",
-                  "velocity", "nfa", "containers", "schedules", "ledger"];
+                  "velocity", "nfa", "containers", "schedules", "ledger", "docs"];
   arrays.forEach((k) => { if (!Array.isArray(st[k])) st[k] = []; });
   st.firearms.forEach((f) => {
     f.barrel = f.barrel || { label: "Factory", rounds: 0, sinceDeepClean: 0, sinceBarrelClean: 0 };
@@ -1984,6 +2008,10 @@ ACT["trip-open"] = (id) => {
    ========================================================================== */
 
 const CID_KEY = "armory.clientId";
+/* Mike's app registration. A client ID is a public identifier, not a credential:
+   every single-page app ships one, and it is the registered redirect address plus
+   PKCE that stop anyone else using it. Overridable from the Data screen. */
+const DEFAULT_CID = "ad206ce5-631e-4159-a123-d7207f40be1a";
 const TOK_KEY = "armory.tokens";
 const SYNC_KEY = "armory.sync";
 const PKCE_KEY = "armory.pkce";
@@ -2003,7 +2031,9 @@ function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); 
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
-const clientId = () => { try { return localStorage.getItem(CID_KEY) || ""; } catch (e) { return ""; } };
+const clientId = () => {
+  try { return localStorage.getItem(CID_KEY) || DEFAULT_CID; } catch (e) { return DEFAULT_CID; }
+};
 const redirectUri = () => location.origin + location.pathname;
 const canSync = () => location.protocol === "https:" || location.hostname === "localhost";
 
@@ -2263,6 +2293,11 @@ async function syncNow(interactive, retry) {
     SYNCING = false;
     LAST_CHECK = Date.now();
     if (interactive) render();
+    /* Only let documents be garbage-collected when this cycle left the state
+       in step with OneDrive; syncErr(null) on success is that signal. */
+    if (typeof syncDocs === "function" && !CONFLICT) {
+      syncDocs(!syncMeta().error).catch(() => {});
+    }
   }
 }
 
@@ -2292,9 +2327,12 @@ ACT["sync-cid"] = () => {
 };
 
 ACT["sync-setup"] = () => {
-  openSheet("Register the app once", `
-    <p class="hint">Ten minutes, once, on the computer. Nothing here costs anything and
-      there is no secret to rotate afterwards.</p>
+  openSheet("App registration", `
+    <div class="note">Already set up. The client ID below is built into the app, so a new
+      browser needs nothing but a sign-in. These steps are here in case you ever need to
+      redo the registration or change the address you host at.</div>
+    <p class="hint">The redirect URI has to match the address you are hosting at,
+      character for character. If sign-in fails with a redirect mismatch, this is why.</p>
     <ol style="padding-left:20px;font-size:0.9375rem;line-height:1.5">
       <li style="margin-bottom:9px">Open <b>entra.microsoft.com</b> and sign in with your
         personal Microsoft account.</li>
@@ -2418,6 +2456,79 @@ ACT["conflict-export"] = () => {
   toast("Both versions exported. Now pick one.");
 };
 
+/* ---------------------------------------------------------------- import */
+/* Importing is the most destructive thing in the app, and the one time you
+   really want to know you picked the right file. So it shows you what is in it
+   and what will happen, rather than a bare "are you sure". */
+let IMPORT_PENDING = null;
+
+function importPreview(st, fname) {
+  IMPORT_PENDING = st;
+  const rounds = (st.ammo || []).reduce((t, a) => t + int(a.qtyBoxed) + int(a.qtyLoose), 0)
+    + (st.magLoads || []).reduce((t, l) => t + int(l.rounds), 0);
+  const mine = {
+    firearms: S.firearms.length,
+    rounds: S.ammo.reduce((t, a) => t + onHand(a), 0),
+    docs: (S.docs || []).length,
+  };
+  const incoming = {
+    firearms: (st.firearms || []).length,
+    rounds,
+    docs: (st.docs || []).length,
+  };
+  const docsGoing = mine.docs && !incoming.docs;
+
+  openSheet("Import a backup", `
+    <p class="hint">${esc(fname || "This file")} \u2014 saved
+      ${esc(st.updatedAt ? st.updatedAt.slice(0, 16).replace("T", " ") : "at an unknown time")}
+      on ${esc(st.deviceName || "an unnamed device")}.</p>
+
+    <div class="card"><h3>What is in the file</h3>
+      <div class="split-nums">
+        <div><span>Firearms</span><b>${fmt(incoming.firearms)}</b></div>
+        <div><span>Ammo lines</span><b>${fmt((st.ammo || []).length)}</b></div>
+        <div><span>Rounds</span><b>${fmt(incoming.rounds)}</b></div>
+        <div><span>Mag types</span><b>${fmt((st.magTypes || []).length)}</b></div>
+      </div>
+      <div class="split-nums" style="margin-top:1px">
+        <div><span>Loaded mags</span><b>${fmt((st.magLoads || []).length)}</b></div>
+        <div><span>Trips</span><b>${fmt((st.trips || []).filter((x) => x.status === "closed").length)}</b></div>
+        <div><span>Velocity</span><b>${fmt((st.velocity || []).length)}</b></div>
+        <div><span>PDFs</span><b>${fmt(incoming.docs)}</b></div>
+      </div></div>
+
+    <div class="note flag" style="margin-top:12px">
+      Replaces everything on this device: ${plural(mine.firearms, "firearm")} and
+      ${fmt(mine.rounds)} rounds go, and these take their place.
+      ${linked() ? "Your OneDrive copy is replaced too, on the next sync." : ""}
+      ${docsGoing ? ` The ${plural(mine.docs, "PDF")} attached here ${
+        mine.docs === 1 ? "is" : "are"} not in this file and will be deleted.` : ""}
+      Undo reverses it.
+    </div>
+
+    <p class="hint">This device keeps its own name, so a copy taken from the
+      ${esc(st.deviceName || "other device")} will not rename it.</p>
+
+    <button class="btn pri wide" data-act="import-go">Replace everything with this file</button>
+    <button class="btn wide" style="margin-top:8px" data-act="import-cancel">Cancel</button>`);
+}
+
+ACT["import-cancel"] = () => { IMPORT_PENDING = null; closeSheet(); };
+
+ACT["import-go"] = () => {
+  const st = IMPORT_PENDING;
+  IMPORT_PENDING = null;
+  if (!st) { closeSheet(); return; }
+  snapshot("import backup");
+  /* Device name is a property of this device, not of the data. */
+  const mine = S.deviceName;
+  S = migrate(st);
+  if (mine) S.deviceName = mine;
+  closeSheet();
+  commit("Backup imported.");
+  if (linked()) syncNow(false);
+};
+
 /* ------------------------------------------------------------- panels */
 function syncLine() {
   if (CONFLICT) {
@@ -2458,20 +2569,14 @@ function syncPanel() {
       instead, then this section will come alive. Export and import still work here.</div>`;
     return h + `</section>`;
   }
-  if (!clientId()) {
-    h += `<p class="hint">Keeps this device and your others in step through a single file
-      in your own OneDrive, in a folder only this app can see. Free, and there is no
-      server in the middle.</p>
-      <button class="btn pri wide" data-act="sync-setup">Set up OneDrive sync</button>`;
-    return h + `</section>`;
-  }
   const m = syncMeta();
   const tok = lsGet(TOK_KEY);
   if (!linked()) {
-    h += `<p class="hint">Client ID is saved. Connect your Microsoft account to start
-      syncing.</p>
+    h += `<p class="hint">Keeps this device and your others in step through one file in
+      your own OneDrive, in a folder only this app can see. The app registration is
+      already configured, so all that is left is signing in.</p>
       <button class="btn pri wide" data-act="sync-in">Connect OneDrive</button>
-      <button class="btn wide" style="margin-top:8px" data-act="sync-setup">Change client ID</button>`;
+      <button class="btn wide" style="margin-top:8px" data-act="sync-setup">Registration details</button>`;
     return h + `</section>`;
   }
   h += `<dl class="card">
@@ -2487,7 +2592,10 @@ function syncPanel() {
     <button class="btn pri" data-act="sync-now">Sync now</button>
     <button class="btn" data-act="sync-name">Name device</button>
   </div>
-  <button class="btn dgr wide" style="margin-top:8px" data-act="sync-out">Disconnect OneDrive</button>
+  <div class="btnrow split" style="margin-top:8px">
+    <button class="btn" data-act="sync-setup">Registration</button>
+    <button class="btn dgr" data-act="sync-out">Disconnect</button>
+  </div>
   <p class="hint" style="margin-top:10px">Changes push a couple of seconds after you make
     them, and the app checks for newer copies when you open or return to it. A browser
     sign-in lasts 24 hours at most, so expect to tap through a sign-in now and then.
@@ -2517,6 +2625,9 @@ function syncPanel() {
    ========================================================================== */
 
 const PERSIST_ASKED = "armory.persistAsked";
+/* Stamped by the build so the app and its service worker cache always agree.
+   Shown on the Data screen, which answers "did my deploy actually land?". */
+const APP_VERSION = "2026.09.08-ec2a87";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -2570,6 +2681,14 @@ async function paintStorage() {
     mode.textContent = p === true ? "persistent" : p === false ? "best effort" : "unknown";
     mode.style.color = p === true ? "var(--moss)" : p === false ? "var(--copper)" : "var(--ink-2)";
   }
+  const ds = $("#docsize");
+  if (ds && typeof docBytesLocal === "function") {
+    const nDocs = (S.docs || []).length;
+    docBytesLocal().then((b) => {
+      const el = $("#docsize");
+      if (el) el.textContent = nDocs ? `${nDocs} · ${kb(b)}` : "0";
+    }).catch(() => {});
+  }
   const use = $("#usage");
   if (use && navigator.storage && navigator.storage.estimate) {
     try {
@@ -2620,6 +2739,16 @@ ACT["sync-link"] = async () => {
 };
 
 /* ---------------------------------------------------------- advice panel */
+ACT["app-update"] = async () => {
+  if (!("serviceWorker" in navigator)) { location.reload(); return; }
+  toast("Checking for a newer build\u2026");
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+  } catch (e) {}
+  setTimeout(() => location.reload(), 700);
+};
+
 function platformPanel() {
   const p = plat();
   let head, body, action = "";
@@ -2662,6 +2791,12 @@ function platformPanel() {
     <div class="card"><h3>${esc(head)}</h3>
     <p class="hint" style="margin:6px 0 0">${body}</p>${action}</div>
     <button class="btn wide" style="margin-top:10px" data-act="sync-link">Copy setup link for another device</button>
+    <dl class="card" style="margin-top:10px">
+      <div class="kv"><dt>App version</dt><dd>${esc(APP_VERSION)}</dd></div>
+    </dl>
+    <button class="btn wide" style="margin-top:8px" data-act="app-update">Check for an update</button>
+    <p class="hint" style="margin-top:8px">Compare that version against the build you
+      deployed. If it is behind, this reloads and picks up the new one.</p>
   </section>`;
 }
 
@@ -2669,54 +2804,455 @@ adoptClientIdFromUrl();
 </script>
 <script>
 "use strict";
+/* ==========================================================================
+   Paperwork.
+
+   PDFs do not go in the state JSON. Base64 inflates a file by a third, the
+   whole log has to fit in about 5 MB of localStorage, and every sync would
+   re-upload every scan. So:
+
+     - the blob lives in IndexedDB, which has real room
+     - each PDF is its own file in OneDrive at Apps/Armory/docs/<id>.pdf
+     - the state JSON carries only the metadata, which is what syncs and
+       what the conflict logic already protects
+
+   Documents are immutable: added or removed, never edited. That means the
+   files themselves cannot conflict, and reconciling is a set comparison
+   rather than a merge. Whatever the state says is the truth; OneDrive and
+   IndexedDB are both brought into line with it.
+   ========================================================================== */
+
+const DOC_DB = "armory-docs";
+const DOC_STORE = "files";
+const DOC_MAX = 4 * 1024 * 1024;   // Graph simple upload comfort zone
+let DOC_TARGET = null;             // which NFA item an attach is destined for
+
+function idb() {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) { rej(new Error("This browser has no IndexedDB.")); return; }
+    const req = indexedDB.open(DOC_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DOC_STORE)) db.createObjectStore(DOC_STORE);
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error || new Error("Could not open the document store."));
+  });
+}
+
+function idbDo(mode, fn) {
+  return idb().then((db) => new Promise((res, rej) => {
+    const tx = db.transaction(DOC_STORE, mode);
+    const store = tx.objectStore(DOC_STORE);
+    let req;
+    try { req = fn(store); } catch (e) { rej(e); return; }
+    /* Take the value from the request's own success event. Reading .result off
+       the request after the fact cannot tell "missing key" from "not ready", and
+       both are undefined — which is exactly the case the fallback download
+       depends on getting right. */
+    let value;
+    if (req && typeof req === "object" && "onsuccess" in req) {
+      req.onsuccess = () => { value = req.result; };
+    }
+    tx.oncomplete = () => res(value);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error || new Error("Document write aborted."));
+  }));
+}
+
+const docPut = (id, blob) => idbDo("readwrite", (s) => s.put(blob, id));
+const docGet = (id) => idbDo("readonly", (s) => s.get(id));
+const docDel = (id) => idbDo("readwrite", (s) => s.delete(id));
+const docKeys = () => idbDo("readonly", (s) => s.getAllKeys());
+
+async function docBytesLocal() {
+  try {
+    const keys = await docKeys();
+    let t = 0;
+    for (const k of keys || []) {
+      const b = await docGet(k);
+      if (b && b.size) t += b.size;
+    }
+    return t;
+  } catch (e) { return 0; }
+}
+
+const docsFor = (ownerType, ownerId) =>
+  (S.docs || []).filter((d) => d.ownerType === ownerType && d.ownerId === ownerId);
+
+function kb(bytes) {
+  const n = int(bytes);
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+}
+
+/* -------------------------------------------------------------- attaching */
+ACT["doc-add"] = (ownerId) => {
+  DOC_TARGET = ownerId;
+  const inp = $("#docfile");
+  if (!inp) { toast("Cannot open the file picker here."); return; }
+  inp.value = "";
+  inp.click();
+};
+
+async function acceptDoc(file) {
+  const ownerId = DOC_TARGET;
+  DOC_TARGET = null;
+  if (!ownerId) return;
+  const item = byId(S.nfa, ownerId);
+  if (!item) { toast("That item no longer exists."); return; }
+
+  const looksPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  if (!looksPdf) { toast("PDFs only. Scan or export the paperwork as a PDF first."); return; }
+  if (file.size > DOC_MAX) {
+    toast(`${kb(file.size)} is too big. Keep scans under 4 MB — reduce the scan resolution.`);
+    return;
+  }
+  if (!file.size) { toast("That file is empty."); return; }
+
+  const id = uid("doc");
+  try {
+    await docPut(id, file);
+  } catch (e) {
+    toast("Could not store the file on this device.");
+    console.error(e);
+    return;
+  }
+  snapshot(`attach ${file.name}`);
+  S.docs = S.docs || [];
+  S.docs.push({
+    id, ownerType: "nfa", ownerId,
+    name: file.name.replace(/\.pdf$/i, "").slice(0, 80) || "Document",
+    size: file.size, addedOn: today(),
+  });
+  save();
+  toast(`Attached to ${item.model}.`);
+  nfaSheet(ownerId);
+  if (typeof syncNow === "function" && linked()) syncNow(false);
+}
+
+/* -------------------------------------------------------------- viewing */
+async function docBlob(d) {
+  let b = null;
+  try { b = await docGet(d.id); } catch (e) {}
+  if (b) return b;
+  /* Not on this device. It may still be in OneDrive. */
+  if (!linked()) return null;
+  const got = await docDownload(d.id);
+  if (got) { try { await docPut(d.id, got); } catch (e) {} }
+  return got;
+}
+
+ACT["doc-open"] = async (docId) => {
+  const d = byId(S.docs || [], docId);
+  if (!d) return;
+  toast("Opening " + d.name + "\u2026");
+  const b = await docBlob(d);
+  if (!b) {
+    toast("Not on this device, and could not be fetched from OneDrive.");
+    return;
+  }
+  const url = URL.createObjectURL(b.type ? b : new Blob([b], { type: "application/pdf" }));
+  const win = window.open(url, "_blank");
+  if (!win) {
+    /* Blocked, or a standalone app that will not open tabs. Fall back to saving. */
+    const a = document.createElement("a");
+    a.href = url; a.download = d.name + ".pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+};
+
+ACT["doc-save"] = async (docId) => {
+  const d = byId(S.docs || [], docId);
+  if (!d) return;
+  const b = await docBlob(d);
+  if (!b) { toast("Not available on this device."); return; }
+  const url = URL.createObjectURL(b);
+  const a = document.createElement("a");
+  a.href = url; a.download = d.name + ".pdf";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+};
+
+ACT["doc-rename"] = (docId) => {
+  const d = byId(S.docs || [], docId);
+  if (!d) return;
+  openSheet("Rename document", `
+    <label class="f"><span>Name</span><input name="nm" value="${esc(d.name)}"></label>
+    <button class="btn pri wide" data-act="doc-rename-go" data-id="${esc(docId)}">Save</button>`);
+};
+ACT["doc-rename-go"] = (docId) => {
+  const d = byId(S.docs || [], docId);
+  const v = readForm($("#sheetbody"));
+  if (!String(v.nm || "").trim()) { toast("Give it a name."); return; }
+  snapshot("rename document");
+  d.name = String(v.nm).trim().slice(0, 80);
+  save();
+  closeSheet();
+  nfaSheet(d.ownerId);
+};
+
+ACT["doc-del"] = async (docId) => {
+  const d = byId(S.docs || [], docId);
+  if (!d) return;
+  if (!confirm(`Delete "${d.name}"? It is removed from this device and from OneDrive.`)) return;
+  const owner = d.ownerId;
+  snapshot("delete document");
+  S.docs = (S.docs || []).filter((x) => x.id !== docId);
+  save();
+  try { await docDel(docId); } catch (e) {}
+  if (typeof syncNow === "function" && linked()) syncNow(false);
+  toast("Deleted.");
+  nfaSheet(owner);
+};
+
+/* -------------------------------------------------------------- graph */
+const DOC_DIR = `${GRAPH}/me/drive/special/approot:/docs`;
+
+async function docRemoteList() {
+  const r = await graph(DOC_DIR + ":/children?$select=name,size");
+  if (r.needsAuth) return null;
+  if (r.status === 404) return [];
+  if (!r.ok) return null;
+  const j = await r.res.json().catch(() => ({}));
+  return (j.value || []).map((x) => String(x.name).replace(/\.pdf$/i, ""));
+}
+
+async function docUpload(id) {
+  let b = null;
+  try { b = await docGet(id); } catch (e) {}
+  if (!b) return false;
+  const r = await graph(`${DOC_DIR}/${id}.pdf:/content`, {
+    method: "PUT", headers: { "Content-Type": "application/pdf" }, body: b,
+  });
+  return !!(r && r.ok);
+}
+
+/* Graph hands back a pre-authenticated URL for content. Fetching that without
+   the Authorization header avoids the CORS failure you get by following the
+   redirect with credentials attached. */
+async function docDownload(id) {
+  const meta = await graph(`${DOC_DIR}/${id}.pdf?$select=@microsoft.graph.downloadUrl`);
+  if (!meta || meta.needsAuth || !meta.ok) return null;
+  const j = await meta.res.json().catch(() => ({}));
+  const url = j["@microsoft.graph.downloadUrl"];
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch (e) { return null; }
+}
+
+async function docRemoteDelete(id) {
+  const r = await graph(`${DOC_DIR}/${id}.pdf`, { method: "DELETE" });
+  return !!(r && (r.ok || r.status === 404));
+}
+
+/* Bring OneDrive and this device in line with what the state lists.
+   Called after the state itself has been reconciled, so S.docs is settled. */
+/* canGc says the state was reconciled with OneDrive a moment ago, so S.docs is
+   the agreed truth and removing unreferenced files is safe. Without that,
+   deleting remote files could destroy paperwork another device has just added
+   and recorded in a state revision this device has not seen yet. */
+async function syncDocs(canGc) {
+  if (!linked() || CONFLICT) return;
+  const listed = S.docs || [];
+  let localKeys = [];
+  try { localKeys = (await docKeys()) || []; } catch (e) { return; }
+
+  const sig = listed.map((d) => d.id).sort().join(",");
+  const gaps = listed.some((d) => !localKeys.includes(d.id));
+  const strays = localKeys.some((k) => !listed.some((d) => d.id === k));
+  const meta = syncMeta();
+  /* The local signature says nothing about what is sitting in OneDrive, so a
+     full look is due periodically even when this device has changed nothing. */
+  const overdue = !meta.docsCheckedAt || (Date.now() - meta.docsCheckedAt > 43200000);
+  if (!gaps && !strays && !overdue && sig === meta.docsSig) return;
+
+  const remote = await docRemoteList();
+  if (remote === null) return;
+
+  for (const d of listed) {
+    const here = localKeys.includes(d.id);
+    const there = remote.includes(d.id);
+    if (here && !there) await docUpload(d.id);
+    else if (!here && there) {
+      const b = await docDownload(d.id);
+      if (b) { try { await docPut(d.id, b); } catch (e) {} }
+    }
+  }
+  /* Nothing references these any more. Local strays always go; remote strays
+     only when the state is known to be current. */
+  for (const k of localKeys) {
+    if (!listed.some((d) => d.id === k)) { try { await docDel(k); } catch (e) {} }
+  }
+  if (canGc) {
+    for (const id of remote) {
+      if (!listed.some((d) => d.id === id)) await docRemoteDelete(id);
+    }
+  }
+  setSyncMeta({ docsSig: sig, docsCheckedAt: Date.now() });
+}
+
+/* -------------------------------------------------------------- NFA sheet */
+function nfaSheet(id) {
+  const x = byId(S.nfa, id);
+  if (!x) { closeSheet(); return; }
+  const wait = daysBetween(x.form4Submitted, x.approved);
+  const waiting = !x.approved ? daysBetween(x.form4Submitted, today()) : null;
+  const docs = docsFor("nfa", id);
+
+  let h = `<dl class="card">
+    <div class="kv"><dt>Type</dt><dd style="font-family:var(--sans)">${esc(x.kind || "\u2014")}</dd></div>
+    <div class="kv"><dt>Serial</dt><dd>${esc(x.serial || "\u2014")}</dd></div>
+    <div class="kv"><dt>Form 4 submitted</dt><dd>${esc(dshow(x.form4Submitted))}</dd></div>
+    <div class="kv"><dt>Approved</dt><dd>${esc(dshow(x.approved))}</dd></div>
+    ${wait != null ? `<div class="kv"><dt>Wait</dt><dd>${fmt(wait)} days</dd></div>`
+      : waiting != null ? `<div class="kv"><dt>Waiting</dt><dd>${fmt(waiting)} days so far</dd></div>` : ""}
+    <div class="kv"><dt>Rounds through it</dt><dd>${fmt(x.roundsFired)}</dd></div>
+  </dl>`;
+
+  if (x.notes) h += `<div class="note" style="margin-top:12px">${esc(x.notes)}</div>`;
+
+  h += `<section class="blk" style="margin-top:16px"><h2 style="font-size:1rem">Paperwork</h2>`;
+  if (!docs.length) {
+    h += `<div class="empty"><b>No documents</b>Attach the approved Form 4 so it is with
+      you at the range rather than in a folder at home.</div>`;
+  } else {
+    h += `<div class="rows">` + docs.map((d) => `
+      <div class="row" style="align-items:flex-start;flex-direction:column;gap:8px">
+        <span style="display:flex;width:100%;gap:10px;align-items:baseline">
+          <span class="grow"><span class="ttl">${esc(d.name)}</span>
+          <span class="meta">${esc(kb(d.size))}${d.addedOn ? " \u00b7 added " + esc(d.addedOn) : ""}</span></span>
+        </span>
+        <span class="btnrow">
+          <button class="btn sm" data-act="doc-open" data-id="${esc(d.id)}">Open</button>
+          <button class="btn sm" data-act="doc-save" data-id="${esc(d.id)}">Save</button>
+          <button class="btn sm" data-act="doc-rename" data-id="${esc(d.id)}">Rename</button>
+          <button class="btn sm dgr" data-act="doc-del" data-id="${esc(d.id)}">Delete</button>
+        </span></div>`).join("") + `</div>`;
+  }
+  h += `<button class="btn ${docs.length ? "" : "pri"} wide" style="margin-top:10px"
+    data-act="doc-add" data-id="${esc(id)}">Attach a PDF</button>
+    <p class="hint" style="margin-top:8px">${linked()
+      ? "Stored on this device and copied to your OneDrive app folder, so it reaches your other devices."
+      : "Stored on this device only. Connect OneDrive to have paperwork follow you."}
+      Up to 4 MB per file.</p></section>`;
+
+  h += `<div class="btnrow" style="margin-top:6px">
+    <button class="btn sm" data-act="nfa-edit" data-id="${esc(id)}">Edit details</button>
+    <button class="btn sm dgr" data-act="nfa-del" data-id="${esc(id)}">Delete item</button></div>`;
+
+  openSheet(x.model, h);
+}
+</script>
+<script>
+"use strict";
 
 /* ========================================================= VELOCITY ==== */
+let VEL_OPEN = null;   // firearm keys whose strings are showing
+
+function velKey(v) {
+  if (v.firearmId && gun(v.firearmId)) return v.firearmId;
+  return "name:" + (v.firearmName || "");
+}
+
+function velCard(v) {
+  const st = vstats(v.shots);
+  if (!st) return "";
+  const span = Math.max(st.es, 1);
+  return `<div class="card" style="margin-bottom:8px">
+    <button class="row" style="padding:0;border:0;width:100%" data-act="vel-open" data-id="${esc(v.id)}">
+      <span class="grow"><span class="ttl">${esc(v.ammoLabel)}</span>
+      <span class="meta">${v.barrelLengthIn ? v.barrelLengthIn + "in" : "length not set"}
+        &middot; ${st.n} shots${v.date ? " \u00b7 " + esc(v.date) : ""}</span></span>
+      <span class="chev">&rsaquo;</span></button>
+    <div class="counter" style="margin-top:6px"><span class="big" style="font-size:2rem">${Math.round(st.avg)}</span>
+      <span class="unit">fps average</span></div>
+    <div class="split-nums">
+      <div><span>SD</span><b>${st.sd.toFixed(1)}</b></div>
+      <div><span>Spread</span><b>${fmt(st.es)}</b></div>
+      <div><span>Low</span><b>${fmt(st.lo)}</b></div>
+      <div><span>High</span><b>${fmt(st.hi)}</b></div>
+    </div>
+    <div class="stripe">${v.shots.map((s) => {
+      const rel = (s - st.lo) / span;
+      return `<i class="${Math.abs(s - st.avg) > st.sd ? "" : "hi"}"
+        style="height:${(28 * (0.35 + 0.65 * rel)).toFixed(0)}px" title="${s}"></i>`;
+    }).join("")}</div>
+    <div class="mono-list" style="margin-top:6px">${v.shots.join("  ")}</div>
+  </div>`;
+}
+
 RENDER.velocity = function () {
   let h = `<section class="blk"><h2>Velocity
     <button class="btn sm" data-act="vel-new">Add</button></h2>
-    <p class="hint">Average tells you where the load sits. SD and extreme spread tell you
-      whether it will hold at distance.</p></section>`;
-  if (!S.velocity.length) return h + emptyState("No strings yet", "Record a chronograph string and the stats come with it.", "Add a string", "vel-new");
+    <p class="hint">Pick a firearm to see its loads. Average tells you where a load sits;
+      SD and extreme spread tell you whether it will hold at distance.</p></section>`;
+  if (!S.velocity.length) return h + emptyState("No strings yet",
+    "Record a chronograph string and the stats come with it.", "Add a string", "vel-new");
 
-  const groups = [];
-  S.velocity.forEach((v) => {
-    const key = (v.firearmId && gun(v.firearmId) ? gun(v.firearmId).name : v.firearmName) || "Unassigned";
-    if (!groups.includes(key)) groups.push(key);
+  /* Build the branches: firearms that have data, in inventory order, then any
+     string whose firearm is not in the list. */
+  const branches = [];
+  S.firearms.forEach((f) => {
+    const items = S.velocity.filter((v) => velKey(v) === f.id);
+    if (items.length) branches.push({ key: f.id, name: f.name,
+      caliber: f.caliber || "Caliber not set", items });
+  });
+  const orphan = S.velocity.filter((v) => !S.firearms.some((f) => velKey(v) === f.id));
+  const seen = [];
+  orphan.forEach((v) => {
+    const k = velKey(v);
+    if (seen.includes(k)) return;
+    seen.push(k);
+    branches.push({ key: k, name: v.firearmName || "Unassigned",
+      caliber: "Not linked to a firearm",
+      items: orphan.filter((x) => velKey(x) === k) });
   });
 
-  h += groups.map((key) => {
-    const items = S.velocity.filter((v) => {
-      const k = (v.firearmId && gun(v.firearmId) ? gun(v.firearmId).name : v.firearmName) || "Unassigned";
-      return k === key;
-    });
-    return `<section class="blk"><h3 style="margin-bottom:8px">${esc(key)}</h3>` +
-      items.map((v) => {
-        const st = vstats(v.shots);
-        if (!st) return "";
-        const span = Math.max(st.es, 1);
-        return `<div class="card" style="margin-bottom:8px">
-          <button class="row" style="padding:0;border:0;width:100%" data-act="vel-open" data-id="${esc(v.id)}">
-            <span class="grow"><span class="ttl">${esc(v.ammoLabel)}</span>
-            <span class="meta">${v.barrelLengthIn ? v.barrelLengthIn + "in" : "length not set"}
-              &middot; ${st.n} shots${v.date ? " \u00b7 " + esc(v.date) : ""}</span></span>
-            <span class="chev">&rsaquo;</span></button>
-          <div class="counter" style="margin-top:6px"><span class="big" style="font-size:2rem">${Math.round(st.avg)}</span>
-            <span class="unit">fps average</span></div>
-          <div class="split-nums">
-            <div><span>SD</span><b>${st.sd.toFixed(1)}</b></div>
-            <div><span>Spread</span><b>${fmt(st.es)}</b></div>
-            <div><span>Low</span><b>${fmt(st.lo)}</b></div>
-            <div><span>High</span><b>${fmt(st.hi)}</b></div>
-          </div>
-          <div class="stripe">${v.shots.map((s) => {
-            const rel = (s - st.lo) / span;
-            return `<i class="${Math.abs(s - st.avg) > st.sd ? "" : "hi"}"
-              style="height:${(28 * (0.35 + 0.65 * rel)).toFixed(0)}px" title="${s}"></i>`;
-          }).join("")}</div>
-          <div class="mono-list" style="margin-top:6px">${v.shots.join("  ")}</div>
-        </div>`;
-      }).join("") + `</section>`;
-  }).join("");
+  /* One branch is not a tree worth collapsing. */
+  if (VEL_OPEN === null) VEL_OPEN = branches.length === 1 ? [branches[0].key] : [];
+
+  const cals = [];
+  branches.forEach((b) => { if (!cals.includes(b.caliber)) cals.push(b.caliber); });
+
+  h += `<section class="blk"><div class="tree">`;
+  cals.forEach((cal) => {
+    const inCal = branches.filter((b) => b.caliber === cal);
+    const nStrings = inCal.reduce((t, b) => t + b.items.length, 0);
+    h += `<div class="grouphead"><span>${esc(cal)}</span>
+      <span class="num">${nStrings === 1 ? "1 load" : nStrings + " loads"}</span></div>`;
+    h += inCal.map((b) => {
+      const open = VEL_OPEN.includes(b.key);
+      const lens = Array.from(new Set(b.items.map((v) => v.barrelLengthIn).filter(Boolean)));
+      const avgs = b.items.map((v) => (vstats(v.shots) || {}).avg).filter(Boolean);
+      const sub = [
+        lens.length ? lens.map((l) => l + "in").join(", ") : null,
+        avgs.length ? Math.round(Math.min(...avgs)) + "\u2013" + Math.round(Math.max(...avgs)) + " fps" : null,
+      ].filter(Boolean).join(" \u00b7 ");
+      return `<div class="node${open ? " open" : ""}">
+        <button class="nodehead" data-act="vel-toggle" data-id="${esc(b.key)}"
+          aria-expanded="${open}">
+          <span class="tw">&rsaquo;</span>
+          <span class="nm"><b>${esc(b.name)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span>
+          <span class="ct">${b.items.length}</span>
+        </button>
+        ${open ? `<div class="nodebody">
+          ${b.items.map(velCard).join("")}
+          <button class="btn sm wide" data-act="vel-add-for" data-id="${esc(b.key)}"
+            style="margin-top:2px">Add a string for ${esc(b.name)}</button>
+        </div>` : ""}</div>`;
+    }).join("");
+  });
+  h += `</div></section>`;
+
+  if (branches.length > 1) {
+    const allOpen = VEL_OPEN.length >= branches.length;
+    h += `<section class="blk"><button class="btn wide" data-act="vel-allopen"
+      data-v="${allOpen ? "0" : "1"}">${allOpen ? "Collapse all" : "Expand all"}</button></section>`;
+  }
 
   h += `<section class="blk"><button class="btn wide" data-act="vel-export">Export velocity data</button>
     <p class="hint" style="margin-top:8px">JSON with shots and stats per string, for MSDope
@@ -2724,16 +3260,43 @@ RENDER.velocity = function () {
   return h;
 };
 
+ACT["vel-toggle"] = (key) => {
+  if (VEL_OPEN === null) VEL_OPEN = [];
+  VEL_OPEN = VEL_OPEN.includes(key)
+    ? VEL_OPEN.filter((k) => k !== key)
+    : VEL_OPEN.concat([key]);
+  render();
+};
+
+ACT["vel-allopen"] = (_id, v) => {
+  if (v === "1") {
+    const keys = [];
+    S.velocity.forEach((x) => { const k = velKey(x); if (!keys.includes(k)) keys.push(k); });
+    VEL_OPEN = keys;
+  } else VEL_OPEN = [];
+  render();
+};
+
+ACT["vel-add-for"] = (key) => velEdit(null, key);
+
 ACT["vel-new"] = () => velEdit(null);
 ACT["vel-open"] = (id) => velEdit(id);
 
-function velEdit(id) {
+function velEdit(id, presetKey) {
   const v = id ? byId(S.velocity, id) : { firearmId: "", firearmName: "", ammoId: "",
     ammoLabel: "", barrelLengthIn: null, date: today(), shots: [], notes: "" };
+  if (!id && presetKey && !String(presetKey).startsWith("name:")) {
+    const pf = gun(presetKey);
+    if (pf) {
+      v.firearmId = pf.id;
+      if (pf.barrel && pf.barrel.lengthIn) v.barrelLengthIn = pf.barrel.lengthIn;
+    }
+  }
   openSheet(id ? v.ammoLabel : "Add a string", `
     <div class="f2">
       <label class="f"><span>Firearm</span><select name="firearmId">
-        <option value="">Unassigned</option>${selOpts(S.firearms, v.firearmId, (x) => x.name)}</select></label>
+        <option value="">Unassigned</option>${selOptsGrouped(S.firearms, v.firearmId,
+          (x) => x.name, (x) => x.caliber || "Caliber not set")}</select></label>
       <label class="f"><span>Barrel length (in)</span><input type="number" step="0.1" name="barrelLengthIn"
         value="${v.barrelLengthIn == null ? "" : v.barrelLengthIn}"></label>
     </div>
@@ -2766,7 +3329,11 @@ ACT["vel-save"] = (id) => {
     barrelLengthIn: f.barrelLengthIn == null ? null : n(f.barrelLengthIn),
     date: f.date || null, shots, notes: f.notes || "",
   });
-  if (isNew) S.velocity.push(v);
+  if (isNew) {
+    S.velocity.push(v);
+    const k = velKey(v);
+    if (VEL_OPEN && !VEL_OPEN.includes(k)) VEL_OPEN = VEL_OPEN.concat([k]);
+  }
   commit(isNew ? "String added." : "Saved."); closeSheet();
 };
 
@@ -2800,14 +3367,17 @@ RENDER.nfa = function () {
   let h = `<section class="blk"><h2>NFA items
     <button class="btn sm" data-act="nfa-new">Add</button></h2></section>`;
   if (!S.nfa.length) return h + emptyState("Nothing registered here", "Track serials, Form 4 dates and rounds through each item.", "Add an item", "nfa-new");
-  h += `<div class="rows">` + S.nfa.map((x) => {
+  h += `<p class="hint">Attach approved Form 4 paperwork to each item so it travels with
+    you.</p><div class="rows">` + S.nfa.map((x) => {
     const wait = daysBetween(x.form4Submitted, x.approved);
     const pending = !x.approved;
     const waiting = pending ? daysBetween(x.form4Submitted, today()) : null;
+    const nd = (S.docs || []).filter((d) => d.ownerType === "nfa" && d.ownerId === x.id).length;
     return `<button class="row" data-act="nfa-open" data-id="${esc(x.id)}">
       <span class="grow"><span class="ttl">${esc(x.model)}</span>
       <span class="meta">${esc(x.kind || "")}${x.serial ? " \u00b7 " + esc(x.serial) : ""}
         ${wait != null ? ` \u00b7 approved in ${fmt(wait)} days` : waiting != null ? ` \u00b7 waiting ${fmt(waiting)} days` : ""}</span></span>
+      ${nd ? `<span class="tag mute">${nd === 1 ? "1 PDF" : nd + " PDFs"}</span>` : ""}
       <span class="tag ${pending ? "" : "moss"}">${esc(pending ? "pending" : (x.status || "approved").toLowerCase())}</span>
       <span class="chev">&rsaquo;</span></button>`;
   }).join("") + `</div>`;
@@ -2815,7 +3385,8 @@ RENDER.nfa = function () {
 };
 
 ACT["nfa-new"] = () => nfaEdit(null);
-ACT["nfa-open"] = (id) => nfaEdit(id);
+ACT["nfa-open"] = (id) => (typeof nfaSheet === "function" ? nfaSheet(id) : nfaEdit(id));
+ACT["nfa-edit"] = (id) => nfaEdit(id);
 
 function nfaEdit(id) {
   const x = id ? byId(S.nfa, id) : { model: "", serial: "", kind: "Suppressor",
@@ -2849,13 +3420,20 @@ ACT["nfa-save"] = (id) => {
     status: v.status || "", roundsFired: int(v.roundsFired), notes: v.notes || "",
   });
   if (isNew) S.nfa.push(x);
-  commit(isNew ? "Item added." : "Saved."); closeSheet();
+  commit(isNew ? "Item added." : "Saved.");
+  if (typeof nfaSheet === "function") nfaSheet(x.id); else closeSheet();
 };
 ACT["nfa-del"] = (id) => {
-  if (!confirm("Delete this item?")) return;
+  const docs = (S.docs || []).filter((d) => d.ownerType === "nfa" && d.ownerId === id);
+  if (!confirm(docs.length
+    ? `Delete this item and its ${docs.length === 1 ? "attached PDF" : docs.length + " attached PDFs"}?`
+    : "Delete this item?")) return;
   snapshot("delete NFA item");
   S.nfa = S.nfa.filter((x) => x.id !== id);
+  S.docs = (S.docs || []).filter((d) => !(d.ownerType === "nfa" && d.ownerId === id));
+  docs.forEach((d) => { if (typeof docDel === "function") docDel(d.id).catch(() => {}); });
   commit("Deleted."); closeSheet();
+  if (typeof syncNow === "function" && linked()) syncNow(false);
 };
 
 /* ============================================================ TOOLS ==== */
@@ -2995,6 +3573,7 @@ RENDER.data = function () {
     <div class="kv"><dt>Magazines loaded</dt><dd>${fmt(S.magLoads.length)}</dd></div>
     <div class="kv"><dt>Trips closed</dt><dd>${fmt(S.trips.filter((t) => t.status === "closed").length)}</dd></div>
     <div class="kv"><dt>Velocity strings</dt><dd>${fmt(S.velocity.length)}</dd></div>
+    <div class="kv"><dt>Attached PDFs</dt><dd id="docsize">${fmt((S.docs || []).length)}</dd></div>
     <div class="kv"><dt>Storage used</dt><dd id="usage">measuring</dd></div>
     <div class="kv"><dt>Storage mode</dt><dd id="persistmode" style="font-family:var(--sans)">checking</dd></div>
   </dl>
@@ -3074,16 +3653,18 @@ document.addEventListener("change", (ev) => {
     render();
     return;
   }
+  if (t.id === "docfile" && t.files && t.files[0]) {
+    if (typeof acceptDoc === "function") acceptDoc(t.files[0]);
+    return;
+  }
   if (t.id === "importfile" && t.files && t.files[0]) {
+    const fname = t.files[0].name;
     const fr = new FileReader();
     fr.onload = () => {
       try {
         const st = JSON.parse(fr.result);
         if (!st || !Array.isArray(st.firearms)) throw new Error("not an armory backup");
-        if (!confirm("Replace everything on this device with this backup?")) return;
-        snapshot("import backup");
-        S = migrate(st);
-        commit("Backup imported.");
+        importPreview(st, fname);
       } catch (e) {
         toast("That file is not an armory backup.");
         console.error(e);
@@ -3122,6 +3703,7 @@ go("home");
   const justLinked = await handleAuthRedirect();
   if (justLinked) { render(); toast("OneDrive connected."); }
   if (typeof syncNow === "function" && linked()) await syncNow(false);
+  if (typeof syncDocs === "function") await syncDocs(!syncMeta().error);
   render();
 })();
 
