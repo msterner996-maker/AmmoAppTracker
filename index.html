@@ -1967,6 +1967,10 @@ ACT["closeout-go"] = () => {
   t.firedTotal = fired;
   RANGEMODE = "trip";
   save(); render();
+  /* The one moment where a mistake is expensive and hard to reconstruct. */
+  if (typeof backupNow === "function" && typeof linked === "function" && linked()) {
+    backupNow(null, true).catch(() => {});
+  }
   toast(`Trip closed. ${fmt(fired)} rounds logged.`, "Undo", undoLast);
 };
 
@@ -2298,6 +2302,9 @@ async function syncNow(interactive, retry) {
     if (typeof syncDocs === "function" && !CONFLICT) {
       syncDocs(!syncMeta().error).catch(() => {});
     }
+    if (typeof maybeBackup === "function" && !syncMeta().error && !CONFLICT) {
+      maybeBackup().catch(() => {});
+    }
   }
 }
 
@@ -2519,6 +2526,11 @@ ACT["import-go"] = () => {
   const st = IMPORT_PENDING;
   IMPORT_PENDING = null;
   if (!st) { closeSheet(); return; }
+  /* Park a copy of what is about to be replaced where it can be got back from
+     any device, not just this one's undo stack. */
+  if (typeof backupNow === "function" && linked()) {
+    backupNow(JSON.stringify(S), true).catch(() => {});
+  }
   snapshot("import backup");
   /* Device name is a property of this device, not of the data. */
   const mine = S.deviceName;
@@ -2627,7 +2639,7 @@ function syncPanel() {
 const PERSIST_ASKED = "armory.persistAsked";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-ec2a87";
+const APP_VERSION = "2026.09.08-aabb16";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -3149,6 +3161,176 @@ function nfaSheet(id) {
 </script>
 <script>
 "use strict";
+/* ==========================================================================
+   Snapshots.
+
+   A browser cannot choose where a download lands. showSaveFilePicker would
+   let the app write to a folder you pick and keep writing there, but Firefox
+   has taken a negative position on it and Safari opposes it, so it does not
+   exist in any browser Mike uses.
+
+   The way to get "export to a specified path" is to stop going through the
+   download folder. The app already talks to OneDrive, so it writes
+   timestamped copies to Apps/Armory/backups/ directly. With the OneDrive
+   client installed that folder is a real directory on the PC, which means
+   the snapshots land on disk at a known path with no dialog and no clicking.
+
+   Sync is not a backup: it faithfully copies a mistake everywhere. These are,
+   because each one is a separate immutable file with the time in its name.
+   ========================================================================== */
+
+const BK_DIR = `${GRAPH}/me/drive/special/approot:/backups`;
+const BK_KEEP = 20;          // roughly a season of trips
+const BK_EVERY = 86400000;   // at most one automatic snapshot a day
+
+/* Seconds are in the name deliberately. At minute resolution a closeout snapshot
+   and a manual one taken moments later share a filename, and the second silently
+   overwrites the first. A snapshot that can be destroyed by another snapshot is
+   not a snapshot. */
+function bkName(d) {
+  const p = (v) => String(v).padStart(2, "0");
+  return `armory-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+}
+
+/* Pass json to snapshot something other than the current state, which is how
+   the pre-import copy is taken before the state is replaced. */
+async function backupNow(json, silent) {
+  if (!linked()) { if (!silent) toast("Connect OneDrive to keep snapshots there."); return false; }
+  const body = json || JSON.stringify(S);
+  const name = bkName(new Date());
+  /* conflictBehavior=rename makes OneDrive itself guarantee the name is free.
+     Timestamping to the second makes a clash unlikely; this makes overwriting a
+     previous snapshot impossible, which is the property that actually matters. */
+  const r = await graph(
+    `${BK_DIR}/${encodeURIComponent(name)}:/content?@microsoft.graph.conflictBehavior=rename`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body,
+    });
+  if (!r || r.needsAuth || !r.ok) {
+    if (!silent) toast("Could not write the snapshot to OneDrive.");
+    return false;
+  }
+  const saved = await r.res.json().catch(() => ({}));
+  setSyncMeta({ lastBackup: Date.now(), lastBackupName: saved.name || name });
+  bkPrune().catch(() => {});
+  if (!silent) toast("Snapshot saved to OneDrive.");
+  return true;
+}
+
+async function bkList() {
+  const r = await graph(`${BK_DIR}:/children?$select=name,size,lastModifiedDateTime&$top=100`);
+  if (!r || r.needsAuth) return null;
+  if (r.status === 404) return [];
+  if (!r.ok) return null;
+  const j = await r.res.json().catch(() => ({}));
+  return (j.value || [])
+    .filter((x) => /\.json$/i.test(x.name))
+    .sort((a, b) => String(b.name).localeCompare(String(a.name)));
+}
+
+async function bkPrune() {
+  const all = await bkList();
+  if (!all) return;
+  for (const f of all.slice(BK_KEEP)) {
+    await graph(`${BK_DIR}/${encodeURIComponent(f.name)}`, { method: "DELETE" });
+  }
+}
+
+/* Daily at most, and never in place of the one taken after a trip. */
+async function maybeBackup() {
+  if (!linked() || CONFLICT) return;
+  if (Date.now() - int(syncMeta().lastBackup) < BK_EVERY) return;
+  await backupNow(null, true);
+}
+
+ACT["backup-now"] = async () => {
+  toast("Writing a snapshot\u2026");
+  await backupNow(null, false);
+  render();
+};
+
+ACT["backup-browse"] = async () => {
+  openSheet("Snapshots in OneDrive", `<div class="empty">Looking\u2026</div>`);
+  const all = await bkList();
+  if (all === null) {
+    reSheet("Snapshots in OneDrive", `<div class="note flag">Could not read the backups
+      folder. Check the sign-in on the Data screen.</div>
+      <button class="btn wide" data-act="sheet-close">Close</button>`);
+    return;
+  }
+  if (!all.length) {
+    reSheet("Snapshots in OneDrive", `<div class="empty"><b>No snapshots yet</b>One is
+      written after each range trip, once a day otherwise, and before any import.</div>
+      <button class="btn pri wide" style="margin-top:10px" data-act="backup-now">Write one now</button>`);
+    return;
+  }
+  reSheet("Snapshots in OneDrive", `
+    <p class="hint">Newest first. The most recent ${BK_KEEP} are kept; older ones are
+      removed automatically. On the PC these are in your OneDrive folder under
+      <b>Apps\\Armory\\backups</b>.</p>
+    <div class="rows">${all.map((f) => {
+      const stamp = String(f.name).replace(/^armory-/, "").replace(/\.json$/, "");
+      const m = stamp.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})?$/);
+      const label = m ? `${m[1]}-${m[2]}-${m[3]} at ${m[4]}:${m[5]}` : stamp;
+      return `<div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <span style="display:flex;gap:10px;align-items:baseline">
+          <span class="grow"><span class="ttl">${esc(label)}</span>
+          <span class="meta">${esc(kb(f.size))}</span></span></span>
+        <span class="btnrow">
+          <button class="btn sm" data-act="backup-restore" data-id="${esc(f.name)}">Restore</button>
+          <button class="btn sm dgr" data-act="backup-del" data-id="${esc(f.name)}">Delete</button>
+        </span></div>`;
+    }).join("")}</div>`);
+};
+
+ACT["backup-restore"] = async (name) => {
+  toast("Fetching that snapshot\u2026");
+  const r = await graph(`${BK_DIR}/${encodeURIComponent(name)}:/content`);
+  if (!r || r.needsAuth || !r.ok) { toast("Could not read that snapshot."); return; }
+  let st = null;
+  try { st = await r.res.json(); } catch (e) {}
+  if (!st || !Array.isArray(st.firearms)) { toast("That file is not readable as a backup."); return; }
+  /* Straight into the same preview the file import uses, so restoring shows you
+     what you are about to replace rather than just doing it. */
+  importPreview(st, name);
+};
+
+ACT["backup-del"] = async (name) => {
+  if (!confirm(`Delete the snapshot ${name}?`)) return;
+  const r = await graph(`${BK_DIR}/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!r || !(r.ok || r.status === 404)) { toast("Could not delete it."); return; }
+  toast("Deleted.");
+  ACT["backup-browse"]();
+};
+
+function backupPanel() {
+  if (!linked()) {
+    return `<section class="blk"><h2>Snapshots</h2>
+      <div class="note">Connect OneDrive and the app will write timestamped copies to
+        <b>Apps/Armory/backups</b> by itself: after every range trip, once a day
+        otherwise, and before any import. With the OneDrive client installed on the PC
+        that folder is a real directory on disk, which is as close to "export to a
+        chosen path" as a browser can get. No browser can pick your download folder
+        for you.</div></section>`;
+  }
+  const m = syncMeta();
+  return `<section class="blk"><h2>Snapshots</h2>
+    <p class="hint">Written to <b>Apps/Armory/backups</b> after every range trip, once a
+      day otherwise, and before any import. The newest ${BK_KEEP} are kept. On the PC
+      that is your OneDrive folder under <b>Apps\\Armory\\backups</b>, so they are on
+      disk without you saving anything.</p>
+    <dl class="card">
+      <div class="kv"><dt>Last snapshot</dt><dd>${m.lastBackup ? esc(agoText(m.lastBackup)) : "\u2014"}</dd></div>
+      ${m.lastBackupName ? `<div class="kv"><dt>Named</dt><dd style="font-size:0.75rem">${esc(m.lastBackupName)}</dd></div>` : ""}
+    </dl>
+    <div class="btnrow split" style="margin-top:10px">
+      <button class="btn" data-act="backup-now">Snapshot now</button>
+      <button class="btn" data-act="backup-browse">Browse snapshots</button>
+    </div></section>`;
+}
+</script>
+<script>
+"use strict";
 
 /* ========================================================= VELOCITY ==== */
 let VEL_OPEN = null;   // firearm keys whose strings are showing
@@ -3554,10 +3736,13 @@ RENDER.data = function () {
   const rounds = S.ammo.reduce((t, a) => t + onHand(a), 0);
   const ul = undoLabel();
   return (typeof syncPanel === "function" ? syncPanel() : "") +
+  (typeof backupPanel === "function" ? backupPanel() : "") +
   (typeof platformPanel === "function" ? platformPanel() : "") +
-  `<section class="blk"><h2>Backup</h2>
-    <p class="hint">A file you can keep, move to another device, or feed to the native
-      build later. Worth doing after a big session even with sync switched on.</p>
+  `<section class="blk"><h2>Export a file</h2>
+    <p class="hint">Goes to whatever folder your browser downloads to; no browser lets
+      a page choose that. In Firefox, Settings then Downloads, tick "Always ask you
+      where to save files" if you want a folder prompt each time. For unattended copies
+      at a fixed path, use snapshots above instead.</p>
     <div class="btnrow split">
       <button class="btn pri" data-act="data-export">Export a backup</button>
       <button class="btn" data-act="data-import">Import a backup</button>
