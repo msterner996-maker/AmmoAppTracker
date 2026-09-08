@@ -1,5 +1,0 @@
-# Never commit inventory data to this repo. It is public.
-armory-import.json
-armory-*.json
-velocity-*.json
-*.pdf
