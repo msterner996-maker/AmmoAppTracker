@@ -37,6 +37,27 @@ h3{font-size:0.9375rem}
 a{color:var(--brass)}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 
+/* A counterpart rather than an inversion: cool slate instead of black, brass
+   lifted so it still reads as brass. One selector, set on <html> by the boot
+   script below, so system preference and the explicit choice share this block. */
+html[data-theme="dark"]{
+  --field:#15181A; --card:#1E2225; --card-2:#23282B;
+  --ink:#E9E7E1; --ink-2:#A3A8AC; --ink-3:#787E83;
+  --rule:#343A3E; --rule-2:#2A2F33; --zebra:#22272A;
+  --brass:#C79A45; --brass-soft:#31281680; --brass-press:#A8813A;
+  --copper:#CE7C52; --moss:#86A879; --flag:#E58177;
+  --flag-soft:#3A2321; --flag-line:#5B3833; --moss-soft:#24301F;
+  --press:#2C3236;
+  --note-bg:#2C2416; --note-ink:#E4CE9A;
+  --note-flag-bg:#38221F; --note-flag-ink:#F0B3AC;
+  --toast-bg:#F0EEE8; --toast-ink:#15181A; --toast-accent:#8A6D2F;
+  --scrim:rgba(0,0,0,0.58); --shadow:rgba(0,0,0,0.45);
+}
+html[data-theme="dark"] .bar>i{opacity:0.9}
+html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="dark"] textarea{
+  background:var(--card-2)}
+html[data-theme="dark"] .step button{background:var(--field)}
+
 /* ---------- layout ---------- */
 header.top{
   position:sticky;top:0;z-index:40;background:var(--field);
@@ -62,7 +83,7 @@ section.blk>h2>.btnrow{flex:none;gap:6px}
   background:none;border:0;border-top:1px solid var(--rule-2);text-align:left}
 .rows>.row:first-child{border-top:0}
 .row.alt{background:var(--zebra)}
-.row:active,.row.alt:active{background:#DEDBD1}
+.row:active,.row.alt:active{background:var(--press)}
 .row .grow{flex:1;min-width:0}
 .row .ttl{font-weight:550;font-size:0.9375rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .meta{color:var(--ink-2);font-size:0.8125rem}
@@ -91,8 +112,8 @@ section.blk>h2>.btnrow{flex:none;gap:6px}
 /* ---------- pills / tags ---------- */
 .tag{display:inline-block;font-size:0.6875rem;font-weight:600;padding:2px 7px;
   border-radius:999px;background:var(--brass-soft);color:var(--brass);white-space:nowrap}
-.tag.flag{background:#F6E2E0;color:var(--flag)}
-.tag.moss{background:#E4EBE2;color:var(--moss)}
+.tag.flag{background:var(--flag-soft);color:var(--flag)}
+.tag.moss{background:var(--moss-soft);color:var(--moss)}
 .tag.mute{background:var(--rule-2);color:var(--ink-2)}
 .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 
@@ -102,8 +123,8 @@ section.blk>h2>.btnrow{flex:none;gap:6px}
   background:var(--card);font-size:0.9375rem;font-weight:550}
 .btn:active{background:var(--card-2)}
 .btn.pri{background:var(--brass);border-color:var(--brass);color:#fff}
-.btn.pri:active{background:#755C27}
-.btn.dgr{color:var(--flag);border-color:#E7C9C5}
+.btn.pri:active{background:var(--brass-press)}
+.btn.dgr{color:var(--flag);border-color:var(--flag-line)}
 .btn.sm{min-height:34px;padding:0 11px;font-size:0.8125rem;border-radius:7px}
 .btn.wide{width:100%}
 .btn:disabled{opacity:0.42}
@@ -136,13 +157,13 @@ legend{font-size:0.8125rem;font-weight:600;color:var(--ink-2);padding:0 5px}
 .step input:focus{outline-offset:-2px}
 
 /* ---------- sheet / modal ---------- */
-.scrim{position:fixed;inset:0;background:rgba(27,31,35,0.42);z-index:60;
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:60;
   opacity:0;pointer-events:none;transition:opacity .18s}
 .scrim.on{opacity:1;pointer-events:auto}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:61;background:var(--field);
   border-radius:14px 14px 0 0;max-height:92vh;display:flex;flex-direction:column;
   transform:translateY(101%);transition:transform .22s ease-out;
-  box-shadow:0 -2px 24px rgba(27,31,35,0.18)}
+  box-shadow:0 -2px 24px var(--shadow)}
 .sheet.on{transform:translateY(0)}
 .sheet>header{display:flex;align-items:center;gap:10px;padding:12px 14px;
   border-bottom:1px solid var(--rule);flex:none}
@@ -184,15 +205,15 @@ nav.tabs button .dot{position:absolute;top:6px;margin-left:15px;width:6px;height
 .kv dt{color:var(--ink-2);margin:0}
 .kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
 dl{margin:0}
-.note{background:var(--brass-soft);border-radius:8px;padding:10px 12px;
-  font-size:0.8125rem;color:#6E5624;margin:0 0 12px}
-.note.flag{background:#F6E2E0;color:#7E2A22}
+.note{background:var(--note-bg);border-radius:8px;padding:10px 12px;
+  font-size:0.8125rem;color:var(--note-ink);margin:0 0 12px}
+.note.flag{background:var(--note-flag-bg);color:var(--note-flag-ink)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(var(--navh) + 14px);z-index:80;background:var(--ink);color:#fff;
+  bottom:calc(var(--navh) + 14px);z-index:80;background:var(--toast-bg);color:var(--toast-ink);
   padding:11px 16px;border-radius:9px;font-size:0.875rem;max-width:88vw;
   opacity:0;transition:opacity .2s;pointer-events:none;display:flex;gap:12px;align-items:center}
 .toast.on{opacity:1;pointer-events:auto}
-.toast button{background:none;border:0;color:#E3C57F;font-weight:600;font-size:0.875rem;padding:0}
+.toast button{background:none;border:0;color:var(--toast-accent);font-weight:600;font-size:0.875rem;padding:0}
 .split-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule-2);
   border-radius:8px;overflow:hidden;margin-top:10px}
 .split-nums div{background:var(--card);padding:8px 6px;text-align:center}
@@ -241,6 +262,35 @@ dl{margin:0}
 .mono-list{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:0.8125rem;color:var(--ink-2)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 </style>
+<script>
+/* Runs before the body renders. Anything later would show a light flash on a
+   dark device. Only one CSS block exists for dark, so "system" is resolved here
+   rather than duplicated as a media query. */
+(function () {
+  var KEY = "armory.theme";
+  function want() {
+    try { return localStorage.getItem(KEY) || "system"; } catch (e) { return "system"; }
+  }
+  window.__applyTheme = function () {
+    var pref = want();
+    var dark = pref === "dark" || (pref === "system" && window.matchMedia
+      && matchMedia("(prefers-color-scheme: dark)").matches);
+    var el = document.documentElement;
+    if (dark) el.setAttribute("data-theme", "dark");
+    else el.setAttribute("data-theme", "light");
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", dark ? "#15181A" : "#F2F1ED");
+    return pref;
+  };
+  window.__applyTheme();
+  if (window.matchMedia) {
+    try {
+      matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", function () { window.__applyTheme(); });
+    } catch (e) {}
+  }
+})();
+</script>
 </head>
 <body>
 <header class="top">
@@ -940,6 +990,7 @@ RENDER.home = function () {
       <span class="meta">Scale, tare, reference weight</span></span><span class="chev">&rsaquo;</span></button>
     <button class="row" data-act="go-data"><span class="grow"><span class="ttl">Export and backup</span>
       <span class="meta">${S.trips.filter((t) => t.status === "closed").length} trips logged</span></span><span class="chev">&rsaquo;</span></button>
+    ${typeof themeRow === "function" ? themeRow() : ""}
   </div></section>`;
 
   const ul = undoLabel();
@@ -2854,9 +2905,10 @@ function syncPanel() {
    ========================================================================== */
 
 const PERSIST_ASKED = "armory.persistAsked";
+const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-0bed1c";
+const APP_VERSION = "2026.09.08-3b194f";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -2890,6 +2942,31 @@ async function requestPersist(force) {
   try { localStorage.setItem(PERSIST_ASKED, "1"); } catch (e) {}
   try { return await navigator.storage.persist(); } catch (e) { return null; }
 }
+
+/* Appearance is per device, not per log: a phone used outdoors and a desk
+   monitor want different answers, so this stays out of S and does not sync. */
+function themePref() {
+  try { return localStorage.getItem(THEME_KEY) || "system"; } catch (e) { return "system"; }
+}
+
+function themeRow() {
+  const pref = themePref();
+  const opts = [["system", "System"], ["light", "Light"], ["dark", "Dark"]];
+  return `<div class="row" style="gap:8px">
+    <span class="grow"><span class="ttl">Appearance</span>
+    <span class="meta">${pref === "system"
+      ? "Following your device setting" : pref === "dark" ? "Dark" : "Light"}</span></span>
+    <span class="btnrow" style="gap:6px">${opts.map(([v, label]) =>
+      `<button class="btn sm${v === pref ? " pri" : ""}" data-act="theme-set"
+        data-v="${v}"${v === pref ? ' aria-current="true"' : ""}>${label}</button>`).join("")}</span>
+  </div>`;
+}
+
+ACT["theme-set"] = (_id, v) => {
+  try { localStorage.setItem(THEME_KEY, v); } catch (e) {}
+  if (typeof window.__applyTheme === "function") window.__applyTheme();
+  render();
+};
 
 ACT["persist-ask"] = async () => {
   const r = await requestPersist(true);
