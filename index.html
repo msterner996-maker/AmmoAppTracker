@@ -84,6 +84,14 @@ section.blk>h2>.btnrow{flex:none;gap:6px}
 .rows>.row:first-child{border-top:0}
 .row.alt{background:var(--zebra)}
 .row.sel,.row.sel.alt{background:var(--brass-soft);box-shadow:inset 3px 0 0 var(--brass)}
+.rows.sortable .row.srt{display:flex;align-items:center;gap:8px;background:var(--card);
+  padding-left:4px;touch-action:pan-y}
+.grip{flex:none;width:34px;min-height:44px;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-3);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.grip:active{cursor:grabbing;color:var(--brass)}
+.row.srt.dragging{background:var(--brass-soft);border-radius:8px;position:relative;z-index:3;
+  box-shadow:0 8px 20px var(--shadow)}
+.row.srt.dragging .grip{color:var(--brass)}
 .pick{flex:none;width:18px;text-align:center;color:var(--brass);font-weight:700}
 .row:active,.row.alt:active{background:var(--press)}
 .row .grow{flex:1;min-width:0}
@@ -360,9 +368,12 @@ const KEY = "armory.state.v1";
 const UNDO_KEY = "armory.undo.v1";
 const UNDO_MAX = 8;
 
-/* Declared here because every later script registers into them. */
+/* Every shared registry is declared here, in the first script, because later
+   scripts register into them. Declaring one next to its own implementation put it
+   after its first use twice now. If you add another, add it here. */
 const RENDER = {};     // screen name -> html builder
 const ACT = {};        // data-act name -> handler
+const SORTABLE = {};   // sortable list name -> commit(idsInNewOrder)
 
 let S = null;          // live state
 let SCREEN = "home";
@@ -746,7 +757,9 @@ function selOptsGrouped(items, val, labelFn, groupFn) {
 /* Stripe every list after it is drawn. The counter restarts at each caliber
    heading so the first line under a heading is always the light one. */
 function stripeRows(root) {
-  $$(".rows", root || document).forEach((box) => {
+  /* Sortable lists are never striped: a shifting stripe under a dragged row reads
+     as the row changing rather than moving. */
+  $$(".rows:not(.sortable)", root || document).forEach((box) => {
     let i = 0;
     Array.from(box.children).forEach((el) => {
       if (el.classList.contains("grouphead")) { i = 0; return; }
@@ -906,26 +919,24 @@ function calOrderSheet() {
   const order = caliberOrder();
   const saved = Array.isArray(S.caliberOrder) && S.caliberOrder.length;
   openSheet("Caliber order", `
-    <p class="hint">Sets the order on Firearms, Ammunition and Magazines, and the caliber
-      headings on Velocity. Syncs to your other devices.</p>
-    <div class="rows">${order.map((cal, i) => {
+    <p class="hint">Drag by the handle, or use the arrows. Sets the order on Firearms,
+      Ammunition and Magazines, and the caliber headings on Velocity. Syncs to your
+      other devices.</p>
+    ${sortableRows("calibers", order.map((cal, i) => {
       const u = caliberUse(cal);
       const bits = [
         u.guns ? plural(u.guns, "firearm") : null,
         u.ammo ? `${plural(u.ammo, "line")} of ammo` : null,
         u.mags ? `${plural(u.mags, "mag type")}` : null,
       ].filter(Boolean);
-      return `<div class="row" style="gap:8px">
+      return { id: cal, html: `
         <span class="grow"><span class="ttl">${esc(cal)}</span>
         <span class="meta">${bits.length ? esc(bits.join(" \u00b7 ")) : "nothing yet"}</span></span>
-        <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="top"
-          ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(cal)} to the top">Top</button>
         <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="-1"
           ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(cal)} up">&uarr;</button>
         <button class="btn sm" data-act="cal-move" data-id="${esc(cal)}" data-v="1"
-          ${i === order.length - 1 ? "disabled" : ""} aria-label="Move ${esc(cal)} down">&darr;</button>
-      </div>`;
-    }).join("")}</div>
+          ${i === order.length - 1 ? "disabled" : ""} aria-label="Move ${esc(cal)} down">&darr;</button>` };
+    }))}
     ${saved ? `<button class="btn wide" style="margin-top:10px" data-act="cal-reset">Back to the default order</button>` : ""}
     <button class="btn pri wide" style="margin-top:8px" data-act="sheet-close">Done</button>`);
 }
@@ -942,6 +953,14 @@ ACT["cal-move"] = (cal, dir) => {
   S.caliberOrder = order;
   save();
   render();
+  calOrderSheet();
+};
+
+SORTABLE.calibers = (ids) => {
+  snapshot("reorder calibers");
+  const present = presentCalibers();
+  S.caliberOrder = ids.filter((c) => present.includes(c));
+  save(); render();
   calOrderSheet();
 };
 
@@ -975,6 +994,106 @@ function byCaliber(items, get) {
   keys.sort((a, b) => caliberRank(a) - caliberRank(b) || a.localeCompare(b));
   return keys.map((c) => [c, map[c]]);
 }
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Drag to reorder.
+
+   Built on pointer events rather than HTML5 drag-and-drop, which does not fire
+   on touch at all and would have worked on the PC and nowhere else.
+
+   The arrow buttons stay. Dragging is faster when you can see the whole list;
+   buttons are better with gloves on, are reachable by keyboard, and cannot be
+   started by accident while scrolling.
+   ========================================================================== */
+
+let DRAG = null;   // SORTABLE registry is declared in the core
+
+const GRIP = `<svg viewBox="0 0 16 16" width="14" height="16" aria-hidden="true">
+  <g fill="currentColor"><circle cx="5" cy="3" r="1.4"/><circle cx="11" cy="3" r="1.4"/>
+  <circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/>
+  <circle cx="5" cy="13" r="1.4"/><circle cx="11" cy="13" r="1.4"/></g></svg>`;
+
+/* rows: [{ id, html }]. The handle is its own element so that dragging can only
+   start from the grip, leaving the rest of the row tappable. */
+function sortableRows(name, rows) {
+  return `<div class="rows sortable" data-sortable="${esc(name)}">` + rows.map((r) =>
+    `<div class="row srt" data-sort-id="${esc(r.id)}">
+      <span class="grip" data-drag role="button" tabindex="-1"
+        aria-label="Drag to reorder">${GRIP}</span>
+      ${r.html}</div>`).join("") + `</div>`;
+}
+
+function rowsOf(box) {
+  return Array.from(box.children).filter((el) => el.classList.contains("srt"));
+}
+
+document.addEventListener("pointerdown", (ev) => {
+  const handle = ev.target.closest("[data-drag]");
+  if (!handle) return;
+  const row = handle.closest(".row.srt");
+  const box = handle.closest("[data-sortable]");
+  if (!row || !box) return;
+  ev.preventDefault();
+  DRAG = { row, box, name: box.dataset.sortable, moved: false,
+    scroller: box.closest(".body") || document.scrollingElement };
+  row.classList.add("dragging");
+  try { handle.setPointerCapture(ev.pointerId); } catch (e) {}
+});
+
+document.addEventListener("pointermove", (ev) => {
+  if (!DRAG) return;
+  ev.preventDefault();
+  const y = ev.clientY;
+
+  /* Swap with whichever neighbour's midpoint the pointer has crossed. Moving the
+     node itself is what makes the others shift to make room.
+
+     Repeated until it settles: one swap per move event is smooth while a finger
+     is sliding, but a quick flick delivers few events and the row would trail
+     behind. Bounded so a pathological layout cannot spin. */
+  for (let guard = 0; guard < 64; guard++) {
+    const list = rowsOf(DRAG.box);
+    const at = list.indexOf(DRAG.row);
+    let swapped = false;
+    for (let i = 0; i < list.length; i++) {
+      if (i === at) continue;
+      const r = list[i].getBoundingClientRect();
+      const mid = r.top + r.height / 2;
+      if (i < at && y < mid) {
+        DRAG.box.insertBefore(DRAG.row, list[i]); swapped = true; break;
+      }
+      if (i > at && y > mid) {
+        DRAG.box.insertBefore(DRAG.row, list[i].nextSibling); swapped = true; break;
+      }
+    }
+    if (!swapped) break;
+    DRAG.moved = true;
+  }
+
+  /* A long list inside a sheet needs to scroll while you hold an item near the edge. */
+  const sc = DRAG.scroller;
+  if (sc && sc.getBoundingClientRect) {
+    const b = sc.getBoundingClientRect();
+    if (y < b.top + 56) sc.scrollTop -= 8;
+    else if (y > b.bottom - 56) sc.scrollTop += 8;
+  }
+});
+
+function endDrag() {
+  if (!DRAG) return;
+  const { row, box, name, moved } = DRAG;
+  DRAG = null;
+  row.classList.remove("dragging");
+  if (!moved) return;
+  const ids = rowsOf(box).map((el) => el.dataset.sortId);
+  const commit = SORTABLE[name];
+  if (commit) commit(ids);
+}
+
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
 </script>
 <script>
 "use strict";
@@ -1577,21 +1696,34 @@ ACT["magtype-order"] = (group) => magOrderSheet(group);
 function magOrderSheet(group) {
   const items = orderedTypes(S.magTypes.filter((m) => (m.group || "Ungrouped") === group));
   openSheet("Order of " + group, `
-    <p class="hint">Sets the order these magazine types appear in under ${esc(group)}.
-      Syncs to your other devices.</p>
-    <div class="rows">${items.map((m, i) => `
-      <div class="row" style="gap:8px">
-        <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity ? ` (${m.capacity})` : ""}</span>
-        <span class="meta">${fmt(m.quantity)} owned \u00b7 ${fmt(magsFree(m))} free</span></span>
-        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="top"
-          ${i === 0 ? "disabled" : ""} aria-label="Move to the top">Top</button>
-        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="-1"
-          ${i === 0 ? "disabled" : ""} aria-label="Move up">&uarr;</button>
-        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="1"
-          ${i === items.length - 1 ? "disabled" : ""} aria-label="Move down">&darr;</button>
-      </div>`).join("")}</div>
+    <p class="hint">Drag by the handle, or use the arrows. Sets the order these magazine
+      types appear in under ${esc(group)}. Syncs to your other devices.</p>
+    ${sortableRows("magtypes", items.map((m, i) => ({ id: m.id, html: `
+      <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity ? ` (${m.capacity})` : ""}</span>
+      <span class="meta">${fmt(m.quantity)} owned \u00b7 ${fmt(magsFree(m))} free</span></span>
+      <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="-1"
+        ${i === 0 ? "disabled" : ""} aria-label="Move up">&uarr;</button>
+      <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="1"
+        ${i === items.length - 1 ? "disabled" : ""} aria-label="Move down">&darr;</button>` })))}
     <button class="btn pri wide" style="margin-top:10px" data-act="sheet-close">Done</button>`);
 }
+
+/* The dragged order is only this group's; every other group keeps its own. */
+function commitMagOrder(group, ids) {
+  const saved = (Array.isArray(S.magTypeOrder) ? S.magTypeOrder : [])
+    .filter((x) => ids.indexOf(x) < 0);
+  S.magTypeOrder = saved.concat(ids);
+}
+
+SORTABLE.magtypes = (ids) => {
+  const first = magType(ids[0]);
+  if (!first) return;
+  const group = first.group || "Ungrouped";
+  snapshot("reorder magazines");
+  commitMagOrder(group, ids);
+  save(); render();
+  magOrderSheet(group);
+};
 
 ACT["magtype-move"] = (id, dir) => {
   const m = magType(id);
@@ -1603,10 +1735,7 @@ ACT["magtype-move"] = (id, dir) => {
   ids.splice(from, 1);
   if (dir === "top") ids.unshift(id);
   else ids.splice(Math.max(0, Math.min(ids.length, from + int(dir))), 0, id);
-  /* Rebuild the global list so other groups keep their own arrangement. */
-  const saved = (Array.isArray(S.magTypeOrder) ? S.magTypeOrder : [])
-    .filter((x) => ids.indexOf(x) < 0);
-  S.magTypeOrder = saved.concat(ids);
+  commitMagOrder(group, ids);
   save(); render();
   magOrderSheet(group);
 };
@@ -3458,7 +3587,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.13-b272cd";
+const APP_VERSION = "2026.09.13-39cae5";
 
 function plat() {
   const ua = navigator.userAgent || "";
