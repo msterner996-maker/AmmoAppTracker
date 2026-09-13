@@ -83,6 +83,8 @@ section.blk>h2>.btnrow{flex:none;gap:6px}
   background:none;border:0;border-top:1px solid var(--rule-2);text-align:left}
 .rows>.row:first-child{border-top:0}
 .row.alt{background:var(--zebra)}
+.row.sel,.row.sel.alt{background:var(--brass-soft);box-shadow:inset 3px 0 0 var(--brass)}
+.pick{flex:none;width:18px;text-align:center;color:var(--brass);font-weight:700}
 .row:active,.row.alt:active{background:var(--press)}
 .row .grow{flex:1;min-width:0}
 .row .ttl{font-weight:550;font-size:0.9375rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -404,6 +406,7 @@ function migrate(st) {
   /* Custom names for individual magazines, keyed by unit id. Only overrides are
      stored; an unnamed magazine is "<type label> <number>" and costs nothing. */
   if (!st.magNames || typeof st.magNames !== "object") st.magNames = {};
+  if (!Array.isArray(st.magTypeOrder)) st.magTypeOrder = [];
 
   /* Schema 2: one magazine group holds both 5.56 and .223. */
   if (int(st.schemaVersion) < 2) {
@@ -617,7 +620,13 @@ const SCREENS = {
   nfa: ["NFA items", ""], tools: ["Tools", ""], data: ["Data", ""],
 };
 
-function go(name) {
+/* Android's back gesture walks browser history. With a single-page app that has
+   no history entries, the first swipe leaves the page and closes the app. So each
+   screen and each open sheet pushes an entry, and popstate unwinds them. */
+function go(name, fromPop) {
+  if (!fromPop && SCREEN !== name) {
+    try { history.pushState({ screen: name }, ""); } catch (e) {}
+  }
   SCREEN = name;
   $$(".screen").forEach((s) => s.classList.toggle("on", s.id === "sc-" + name));
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === name));
@@ -646,7 +655,15 @@ function render() {
 
 /* ---------------------------------------------------------------- sheet */
 let sheetMount = null;
+let SHEET_OPEN = false;
+
 function openSheet(title, html, onmount) {
+  /* A sheet opened from another sheet replaces it rather than stacking, so one
+     back gesture closes the lot instead of walking through each step. */
+  if (!SHEET_OPEN) {
+    SHEET_OPEN = true;
+    try { history.pushState({ sheet: true }, ""); } catch (e) {}
+  }
   $("#sheetttl").textContent = title;
   $("#sheetbody").innerHTML = html;
   $("#sheet").classList.add("on");
@@ -657,6 +674,16 @@ function openSheet(title, html, onmount) {
   if (sheetMount) sheetMount($("#sheetbody"));
 }
 function closeSheet() {
+  /* Go back rather than closing directly, so the history entry the sheet added is
+     consumed. popstate does the actual closing. */
+  if (SHEET_OPEN && history.state && history.state.sheet) {
+    try { history.back(); return; } catch (e) {}
+  }
+  hardCloseSheet();
+}
+
+function hardCloseSheet() {
+  SHEET_OPEN = false;
   $("#sheet").classList.remove("on");
   $("#scrim").classList.remove("on");
   document.body.style.overflow = "";
@@ -1506,6 +1533,24 @@ ACT["ammo-del"] = (id) => {
 /* ============================================================ MAGS ====== */
 /* A group label can cover more than one caliber: "5.56/.223" fits both, because
    the magazine does. Matching splits on the slash rather than comparing strings. */
+/* Loading ten magazines from one can should not mean picking the ammunition ten
+   times. Remembered per group, on this device only. */
+const LAST_AMMO_KEY = "armory.lastAmmo";
+function lastAmmoFor(group) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LAST_AMMO_KEY) || "{}");
+    const id = all[group || ""];
+    return id && ammoOf(id) ? id : null;
+  } catch (e) { return null; }
+}
+function rememberAmmo(group, ammoId) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LAST_AMMO_KEY) || "{}");
+    all[group || ""] = ammoId;
+    localStorage.setItem(LAST_AMMO_KEY, JSON.stringify(all));
+  } catch (e) {}
+}
+
 function groupCals(group) {
   return String(group || "").split("/").map((x) => x.trim()).filter(Boolean);
 }
@@ -1515,6 +1560,56 @@ function groupFits(group, caliber) {
 }
 
 const unitId = (typeId, num) => typeId + "#" + num;
+
+/* Magazine types keep a saved arrangement per caliber group, the same way
+   calibers do. Anything not in it sorts after, so a newly added type appears at
+   the bottom until you move it rather than vanishing. */
+function orderedTypes(items) {
+  const saved = Array.isArray(S.magTypeOrder) ? S.magTypeOrder : [];
+  return items.slice().sort((a, b) => {
+    const ia = saved.indexOf(a.id), ib = saved.indexOf(b.id);
+    return (ia < 0 ? 9999 : ia) - (ib < 0 ? 9999 : ib);
+  });
+}
+
+ACT["magtype-order"] = (group) => magOrderSheet(group);
+
+function magOrderSheet(group) {
+  const items = orderedTypes(S.magTypes.filter((m) => (m.group || "Ungrouped") === group));
+  openSheet("Order of " + group, `
+    <p class="hint">Sets the order these magazine types appear in under ${esc(group)}.
+      Syncs to your other devices.</p>
+    <div class="rows">${items.map((m, i) => `
+      <div class="row" style="gap:8px">
+        <span class="grow"><span class="ttl">${esc(m.label)}${m.capacity ? ` (${m.capacity})` : ""}</span>
+        <span class="meta">${fmt(m.quantity)} owned \u00b7 ${fmt(magsFree(m))} free</span></span>
+        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="top"
+          ${i === 0 ? "disabled" : ""} aria-label="Move to the top">Top</button>
+        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="-1"
+          ${i === 0 ? "disabled" : ""} aria-label="Move up">&uarr;</button>
+        <button class="btn sm" data-act="magtype-move" data-id="${esc(m.id)}" data-v="1"
+          ${i === items.length - 1 ? "disabled" : ""} aria-label="Move down">&darr;</button>
+      </div>`).join("")}</div>
+    <button class="btn pri wide" style="margin-top:10px" data-act="sheet-close">Done</button>`);
+}
+
+ACT["magtype-move"] = (id, dir) => {
+  const m = magType(id);
+  if (!m) return;
+  const group = m.group || "Ungrouped";
+  const items = orderedTypes(S.magTypes.filter((x) => (x.group || "Ungrouped") === group));
+  const ids = items.map((x) => x.id);
+  const from = ids.indexOf(id);
+  ids.splice(from, 1);
+  if (dir === "top") ids.unshift(id);
+  else ids.splice(Math.max(0, Math.min(ids.length, from + int(dir))), 0, id);
+  /* Rebuild the global list so other groups keep their own arrangement. */
+  const saved = (Array.isArray(S.magTypeOrder) ? S.magTypeOrder : [])
+    .filter((x) => ids.indexOf(x) < 0);
+  S.magTypeOrder = saved.concat(ids);
+  save(); render();
+  magOrderSheet(group);
+};
 
 /* Magazines are derived from the type's quantity rather than stored one by one.
    Change the quantity and the numbers follow; only custom names are persisted. */
@@ -1699,7 +1794,8 @@ ACT["unit-load"] = (id) => {
       <button class="btn wide" data-act="sheet-close">Close</button>`);
     return;
   }
-  const a = pool[0];
+  const recent = lastAmmoFor(m.group || "");
+  const a = (recent && pool.find((x) => x.id === recent)) || pool[0];
   openSheet("Load " + u.name, `
     <label class="f"><span>Ammunition</span>
       <select name="ammoId">${selOptsGrouped(pool, a.id, ammoLabel, (x) => x.caliber)}</select></label>
@@ -1720,6 +1816,8 @@ ACT["unit-load-go"] = (id) => {
   if (loadOfUnit(id)) { toast("That magazine is already loaded."); return; }
   const have = v.src === "boxed" ? int(a.qtyBoxed) : int(a.qtyLoose);
   if (rounds > have) { toast(`Only ${fmt(have)} ${v.src}.`); return; }
+  rememberAmmo(m.group || "", a.id);
+  rememberAmmo("any", a.id);
   snapshot("load " + u.name);
   if (v.src === "boxed") a.qtyBoxed = int(a.qtyBoxed) - rounds;
   else a.qtyLoose = int(a.qtyLoose) - rounds;
@@ -1780,7 +1878,9 @@ RENDER.mags = function () {
         sub: `${fmt(own)} owned \u00b7 ${fmt(free)} free`,
         count: items.length,
         tag: nocap ? `<span class="tag flag">${nocap} no capacity</span>` : "",
-        body: () => `<div class="tree inner">${items.map(magTypeNode).join("")}</div>`,
+        body: () => `<div class="tree inner">${orderedTypes(items).map(magTypeNode).join("")}</div>`
+          + (items.length > 1 ? `<button class="btn sm wide" style="margin-top:10px"
+              data-act="magtype-order" data-id="${esc(cal)}">Reorder these magazines</button>` : ""),
       };
     }),
   });
@@ -1790,7 +1890,12 @@ RENDER.mags = function () {
 /* ---- loading: the loose/boxed -> magazine migration ---- */
 ACT["mag-load"] = (ammoId) => {
   if (!S.ammo.length) { toast("Add an ammunition line first."); return; }
-  const a = ammoId ? ammoOf(ammoId) : S.ammo[0];
+  let a = ammoId ? ammoOf(ammoId) : null;
+  if (!a) {
+    /* Pick up where the last load left off. */
+    const recent = lastAmmoFor("any");
+    a = (recent && ammoOf(recent)) || S.ammo[0];
+  }
   magLoadForm(a.id);
 };
 
@@ -1846,6 +1951,8 @@ ACT["mag-load-go"] = () => {
   const have = v.src === "boxed" ? int(a.qtyBoxed) : int(a.qtyLoose);
   if (need > have) { toast(`That needs ${fmt(need)} but only ${fmt(have)} are ${v.src}.`); return; }
 
+  rememberAmmo("any", a.id);
+  rememberAmmo(m.group || "", a.id);
   snapshot(`load ${count}\u00d7 ${m.label}`);
   if (v.src === "boxed") a.qtyBoxed = int(a.qtyBoxed) - need;
   else a.qtyLoose = int(a.qtyLoose) - need;
@@ -2183,23 +2290,42 @@ function entryCandidates(entryId, ammoId) {
   return S.magLoads.filter((l) => l.ammoId === ammoId && !taken.has(l.id));
 }
 
-/* Group identical magazines together so packing is "4 of these" rather than
-   ticking four indistinguishable boxes. A partly used magazine has a different
-   round count, so it forms its own group and stays visible. */
-function magBuckets(candidates) {
-  const map = new Map();
+/* Packing used to be "three of these", which was right when magazines were
+   interchangeable. Now that each one is numbered and nameable, the list is of
+   actual magazines and you tap the ones going in the bag. */
+function magPickList(candidates, chosen) {
+  if (!candidates.length) {
+    return `<p class="hint" style="margin:0">No magazines are loaded with this
+      ammunition. Load some from the Mags tab, or just bring boxed and loose rounds.</p>`;
+  }
+  const groups = [];
   candidates.forEach((l) => {
-    const k = (l.magTypeId || "none") + ":" + int(l.rounds);
-    if (!map.has(k)) map.set(k, { key: k, magTypeId: l.magTypeId || null, rounds: int(l.rounds), loads: [] });
-    map.get(k).loads.push(l.id);
+    const k = l.magTypeId || "none";
+    let g = groups.find((x) => x.key === k);
+    if (!g) { groups.push(g = { key: k, type: l.magTypeId ? magType(l.magTypeId) : null, loads: [] }); }
+    g.loads.push(l);
   });
-  const arr = Array.from(map.values());
-  arr.sort((a, b) => {
-    const la = a.magTypeId ? magLabel(magType(a.magTypeId)) : "\uffff";
-    const lb = b.magTypeId ? magLabel(magType(b.magTypeId)) : "\uffff";
-    return la.localeCompare(lb) || b.rounds - a.rounds;
-  });
-  return arr;
+
+  return groups.map((g) => {
+    const ids = g.loads.map((l) => l.id);
+    const allOn = ids.every((id) => chosen.has(id));
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
+        <b style="font-weight:600;font-size:0.875rem;flex:1">${esc(g.type ? magLabel(g.type) : "Unassigned magazines")}</b>
+        <button class="btn sm" data-act="entry-mag-all" data-id="${esc(g.key)}"
+          data-v="${allOn ? "0" : "1"}">${allOn ? "None" : "All"}</button>
+      </div>
+      <div class="rows">${g.loads.map((l) => {
+        const on = chosen.has(l.id);
+        const a = ammoOf(l.ammoId);
+        return `<button class="row${on ? " sel" : ""}" data-act="entry-mag-toggle"
+          data-id="${esc(l.id)}" aria-pressed="${on}">
+          <span class="pick">${on ? "&#10003;" : ""}</span>
+          <span class="grow"><span class="ttl">${esc(loadName(l))}</span>
+          <span class="meta">${esc(a ? ammoLabel(a) : "ammo missing")}</span></span>
+          <span class="num" style="font-weight:550">${fmt(l.rounds)}</span></button>`;
+      }).join("")}</div></div>`;
+  }).join("");
 }
 
 function entryForm(entryId, override) {
@@ -2207,6 +2333,9 @@ function entryForm(entryId, override) {
   if (!S.firearms.length || !S.ammo.length) { toast("Add a firearm and an ammunition line first."); return; }
   EDIT_ENTRY = entryId || null;
   const e = entryId ? byId(t.entries, entryId) : null;
+  if (!override) {
+    ENTRY_PICK = e ? (e.mags || []).map((g) => g.magLoadId) : [];
+  }
   const base = override || (e
     ? { firearmId: e.firearmId, ammoId: e.ammoId,
         broughtBoxed: int(e.broughtBoxed), broughtLoose: int(e.broughtLoose),
@@ -2223,12 +2352,11 @@ function entryForm(entryId, override) {
   if (!pool.some((a) => a.id === aid)) aid = pool[0] && pool[0].id;
   const a = ammoOf(aid);
 
-  const buckets = magBuckets(entryCandidates(entryId, aid));
-  const chosen = new Set(base.chosen || []);
-  const packedRounds = buckets.reduce((sum, b) => {
-    const k = b.loads.filter((x) => chosen.has(x)).length;
-    return sum + k * b.rounds;
-  }, 0);
+  const candidates = entryCandidates(entryId, aid);
+  const chosen = new Set((base.chosen || []).filter((id) => candidates.some((l) => l.id === id)));
+  const packedRounds = candidates
+    .filter((l) => chosen.has(l.id))
+    .reduce((t, l) => t + int(l.rounds), 0);
 
   openSheet(entryId ? "Edit line" : "Add a line", `
     <label class="f"><span>Firearm</span>
@@ -2244,59 +2372,59 @@ function entryForm(entryId, override) {
       <label class="f"><span>Loose</span>${stepper("broughtLoose", base.broughtLoose)}</label>
     </div></fieldset>
 
-    <fieldset><legend>Loaded magazines to bring${packedRounds ? ` \u2014 ${fmt(packedRounds)} rounds` : ""}</legend>
-      ${buckets.length ? buckets.map((b) => {
-        const m = b.magTypeId ? magType(b.magTypeId) : null;
-        const sel = b.loads.filter((x) => chosen.has(x)).length;
-        const namedInBucket = b.loads.map((x) => byId(S.magLoads, x))
-          .filter((x) => x && x.magUnitId && unitOf(x.magUnitId) && unitOf(x.magUnitId).custom)
-          .map((x) => unitOf(x.magUnitId).name);
-        return `<div class="bucket">
-          <div class="top">
-            <b>${esc(m ? magLabel(m) : "Unassigned magazines")}</b>
-            <span class="avail">${fmt(b.rounds)} rounds each</span>
-          </div>
-          <div class="ctl">
-            ${stepper("bk_" + b.key, sel, 0)}
-            <span class="of">of ${plural(b.loads.length, "mag")} loaded</span>
-          </div>
-          ${namedInBucket.length ? `<div class="hint" style="margin:6px 0 0">Takes from:
-            ${esc(namedInBucket.slice(0, 4).join(", "))}${namedInBucket.length > 4 ? "\u2026" : ""}</div>` : ""}
-          ${m ? "" : `<div class="hint" style="margin:6px 0 0">Carried over from the
-            spreadsheet with no magazine type. <button class="linkbtn"
-            data-act="mag-split" data-id="${esc(b.loads[0])}">Split into real magazines</button></div>`}
-        </div>`;
-      }).join("") : `<p class="hint" style="margin:0">No magazines are loaded with this ammunition.
-        Load some from the Mags tab, or just bring boxed and loose rounds.</p>`}
+    <fieldset><legend>Magazines to bring${chosen.size
+      ? ` \u2014 ${plural(chosen.size, "mag")}, ${fmt(packedRounds)} rounds` : ""}</legend>
+      ${magPickList(candidates, chosen)}
     </fieldset>
 
     <button class="btn pri wide" data-act="entry-save" data-id="${esc(entryId || "")}">${entryId ? "Save line" : "Add line"}</button>
     ${entryId ? `<button class="btn dgr wide" style="margin-top:8px" data-act="entry-del" data-id="${esc(entryId)}">Remove line</button>` : ""}`);
 }
 
-/* Turn the bucket counts back into specific magazine records. */
-function readChosenMags(entryId, ammoId, v) {
-  const out = [];
-  magBuckets(entryCandidates(entryId, ammoId)).forEach((b) => {
-    const want = Math.min(int(v["bk_" + b.key]), b.loads.length);
-    for (let i = 0; i < want; i++) out.push(b.loads[i]);
-  });
-  return out;
+/* Which magazines are ticked is held here between redraws of the sheet. */
+let ENTRY_PICK = [];
+
+function readChosenMags(entryId, ammoId) {
+  const ok = entryCandidates(entryId, ammoId).map((l) => l.id);
+  return ENTRY_PICK.filter((id) => ok.indexOf(id) >= 0);
 }
 
-ACT["entry-reload"] = () => {
+function entryFormState() {
   const v = readForm($("#sheetbody"));
-  entryForm(EDIT_ENTRY, {
+  return {
     firearmId: v.firearmId, ammoId: v.ammoId,
     broughtBoxed: int(v.broughtBoxed), broughtLoose: int(v.broughtLoose),
-    chosen: readChosenMags(EDIT_ENTRY, v.ammoId, v),
-  });
+    chosen: ENTRY_PICK.slice(),
+  };
+}
+
+ACT["entry-reload"] = () => entryForm(EDIT_ENTRY, entryFormState());
+
+ACT["entry-mag-toggle"] = (loadId) => {
+  const st = entryFormState();
+  ENTRY_PICK = ENTRY_PICK.indexOf(loadId) >= 0
+    ? ENTRY_PICK.filter((x) => x !== loadId)
+    : ENTRY_PICK.concat([loadId]);
+  st.chosen = ENTRY_PICK.slice();
+  entryForm(EDIT_ENTRY, st);
+};
+
+ACT["entry-mag-all"] = (typeKey, on) => {
+  const st = entryFormState();
+  const ids = entryCandidates(EDIT_ENTRY, st.ammoId)
+    .filter((l) => (l.magTypeId || "none") === typeKey)
+    .map((l) => l.id);
+  ENTRY_PICK = on === "1"
+    ? ENTRY_PICK.concat(ids.filter((x) => ENTRY_PICK.indexOf(x) < 0))
+    : ENTRY_PICK.filter((x) => ids.indexOf(x) < 0);
+  st.chosen = ENTRY_PICK.slice();
+  entryForm(EDIT_ENTRY, st);
 };
 
 ACT["entry-save"] = (entryId) => {
   const t = openTrip();
   const v = readForm($("#sheetbody"));
-  const mags = readChosenMags(entryId || null, v.ammoId, v)
+  const mags = readChosenMags(entryId || null, v.ammoId)
     .map((mlid) => {
       const l = byId(S.magLoads, mlid);
       return l ? { magLoadId: l.id, magTypeId: l.magTypeId, magUnitId: l.magUnitId || null,
@@ -2618,19 +2746,32 @@ async function challengeFor(verifier) {
   return b64url(d);
 }
 
-async function signIn() {
-  if (!canSync()) { toast("Sync needs the app served over https."); return; }
-  if (!clientId()) { toast("Add your client ID first."); return; }
+/* One builder for all three routes: the button, the hidden frame, and the
+   top-level bounce. They differ only in whether interaction is allowed. */
+async function authorizeUrl(opts) {
+  opts = opts || {};
   const verifier = randStr(48), state = randStr(12);
-  lsSet(PKCE_KEY, { verifier, state });
-  const u = new URL(AUTH_BASE + "/authorize");
+  lsSet(PKCE_KEY, { verifier, state, silent: !!opts.silent });
+  const tok = lsGet(TOK_KEY) || {};
+  const hint = opts.who || tok.who || syncMeta().lapsedWho;
   const p = {
     client_id: clientId(), response_type: "code", redirect_uri: redirectUri(),
     scope: SCOPES, code_challenge: await challengeFor(verifier),
-    code_challenge_method: "S256", state, prompt: "select_account",
+    code_challenge_method: "S256", state,
   };
+  if (opts.silent) p.prompt = "none";
+  /* Reconnecting the same account should not make him pick it from a list. */
+  if (hint) p.login_hint = hint;
+  else if (!opts.silent) p.prompt = "select_account";
+  const u = new URL(AUTH_BASE + "/authorize");
   Object.keys(p).forEach((k) => u.searchParams.set(k, p[k]));
-  location.assign(u.toString());
+  return u.toString();
+}
+
+async function signIn() {
+  if (!canSync()) { toast("Sync needs the app served over https."); return; }
+  if (!clientId()) { toast("Add your client ID first."); return; }
+  location.assign(await authorizeUrl({ silent: false }));
 }
 
 async function tokenRequest(extra) {
@@ -2667,8 +2808,16 @@ function cleanUrl() {
 async function handleAuthRedirect() {
   const q = new URLSearchParams(location.search);
   if (q.get("error")) {
-    syncErr(q.get("error_description") || q.get("error"));
+    const code = q.get("error");
     cleanUrl();
+    if (code === "login_required" || code === "interaction_required"
+        || code === "consent_required") {
+      /* A quiet attempt that needed a human. Expected, so the banner does the
+         talking rather than an alarming message. */
+      lsDel(PKCE_KEY);
+      return false;
+    }
+    syncErr(q.get("error_description") || code);
     return false;
   }
   const code = q.get("code");
@@ -2683,6 +2832,7 @@ async function handleAuthRedirect() {
       grant_type: "authorization_code", code,
       redirect_uri: redirectUri(), code_verifier: pk.verifier,
     });
+    setSyncMeta({ lapsed: null, silentAt: null, silentFails: 0, topAt: null });
     syncErr(null);
     return true;
   } catch (e) { syncErr(e.message); return false; }
@@ -2700,10 +2850,98 @@ async function accessToken() {
     syncErr(null);
     return nt.access;
   } catch (e) {
+    /* Keep who it was. Deleting every trace made linked() false, which made the
+       sync line on Home render as nothing at all - the app went quiet instead of
+       saying it had stopped syncing. */
+    setSyncMeta({ lapsed: Date.now(), lapsedWho: (t && t.who) || syncMeta().lapsedWho || null });
     lsDel(TOK_KEY);
     syncErr("Sign-in expired. Connect again to resume syncing.");
     return null;
   }
+}
+
+/* True when OneDrive was set up and has stopped working, as opposed to never
+   having been set up. */
+function lapsed() { return !linked() && !!syncMeta().lapsed; }
+
+function lapsedFor() {
+  const at = syncMeta().lapsed;
+  return at ? Math.floor((Date.now() - at) / 86400000) : 0;
+}
+
+/* A single-page app's refresh token is capped at 24 hours and cannot be extended,
+   so leaving the app shut for a day is enough to break syncing. Microsoft's own
+   session cookie usually outlives it, so this asks the authorize endpoint for a
+   fresh code with prompt=none inside a hidden frame. It succeeds without any
+   interaction where third-party cookies survive, and fails cleanly where they do
+   not - Firefox partitions them, so there the banner is the answer. */
+async function silentRenew() {
+  if (!canSync() || !clientId() || linked()) return false;
+  const who = syncMeta().lapsedWho;
+  if (!who) return false;
+  const m = syncMeta();
+  /* Never hammer it: once every half hour, and give up after a few refusals. */
+  if (m.silentAt && Date.now() - m.silentAt < 1800000) return false;
+  if (int(m.silentFails) >= 3) return false;
+  setSyncMeta({ silentAt: Date.now() });
+  const src = await authorizeUrl({ silent: true, who });
+
+  return new Promise((resolve) => {
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:absolute;width:0;height:0;border:0;visibility:hidden";
+    let done = false;
+    const finish = (okd) => {
+      if (done) return;
+      done = true;
+      clearInterval(poll);
+      clearTimeout(bail);
+      try { frame.remove(); } catch (e) {}
+      if (okd) setSyncMeta({ lapsed: null, silentFails: 0, error: null });
+      else setSyncMeta({ silentFails: int(syncMeta().silentFails) + 1 });
+      resolve(okd);
+    };
+    /* The frame loads this same app, which recognises it is framed and does
+       nothing but exchange the code into localStorage. Poll for that. */
+    const poll = setInterval(() => { if (linked()) finish(true); }, 300);
+    const bail = setTimeout(() => finish(false), 12000);
+    frame.src = src;
+    document.body.appendChild(frame);
+  });
+}
+
+/* Where the hidden frame is blocked - Firefox partitions the third-party cookie it
+   needs - a top-level redirect still works, because the navigation is first-party to
+   Microsoft. It costs a flash and a second, and it does not touch the log, which is
+   already on disk. Guarded hard: online only, once per lapse, and never while a
+   previous attempt is unresolved, so it can never become a redirect loop. */
+const AUTO_KEY = "armory.autoReconnect";
+function autoReconnect() {
+  try { return localStorage.getItem(AUTO_KEY) !== "0"; } catch (e) { return true; }
+}
+
+ACT["auto-toggle"] = () => {
+  try { localStorage.setItem(AUTO_KEY, autoReconnect() ? "0" : "1"); } catch (e) {}
+  render();
+};
+
+async function topLevelRenew() {
+  if (!autoReconnect() || !canSync() || !clientId() || linked()) return false;
+  if (navigator.onLine === false) return false;
+  const m = syncMeta();
+  const who = m.lapsedWho;
+  if (!who) return false;
+  /* One attempt per lapse. topAt is cleared only by a successful sign-in. */
+  if (m.topAt) return false;
+  setSyncMeta({ topAt: Date.now(), topUrl: null });
+  const url = await authorizeUrl({ silent: true, who });
+  setSyncMeta({ topUrl: url });
+  location.assign(url);
+  return true;
+}
+
+/* Running inside the hidden frame: exchange the code, write the token, stop. */
+function framedAuth() {
+  return window.top !== window.self && /[?&](code|error)=/.test(location.search);
 }
 
 function signOut() {
@@ -3093,6 +3331,20 @@ function syncLine() {
       <button class="btn pri wide" data-act="conflict-open">Compare the two versions</button>
     </div></section>`;
   }
+  if (lapsed()) {
+    const m = syncMeta();
+    const days = lapsedFor();
+    const when = m.pushed || m.pulled;
+    return `<section class="blk"><div class="card" style="border-color:var(--flag)">
+      <h2>OneDrive is not syncing</h2>
+      <p class="hint" style="margin:5px 0 11px">The sign-in expired${
+        days >= 1 ? ` ${plural(days, "day")} ago` : ""}${
+        when ? `, and nothing has reached OneDrive since ${esc(agoText(when))}` : ""}.
+        A browser sign-in only lasts 24 hours. Your changes are safe on this device
+        and will go up as soon as you reconnect.</p>
+      <button class="btn pri wide" data-act="sync-in">Reconnect OneDrive</button>
+    </div></section>`;
+  }
   if (!linked()) return "";
   const m = syncMeta();
   const when = m.pushed || m.pulled || m.checked;
@@ -3125,6 +3377,19 @@ function syncPanel() {
   }
   const m = syncMeta();
   const tok = lsGet(TOK_KEY);
+  if (lapsed()) {
+    const days = lapsedFor();
+    h += `<div class="note flag">Not syncing. The sign-in expired${
+      days >= 1 ? ` ${plural(days, "day")} ago` : ""}. A browser sign-in lasts at most
+      24 hours, which is a browser limitation rather than a setting. The app tries to
+      renew it quietly when you open it; where that is blocked, this is the prompt.</div>
+      <button class="btn pri wide" data-act="sync-in">Reconnect OneDrive</button>
+      <p class="hint" style="margin-top:10px">On the Microsoft sign-in page, tick
+        <b>Stay signed in</b>. The 24 hour limit is on the token, not on the sign-in:
+        a persistent session lets the app renew quietly for weeks without asking.</p>
+      <button class="btn wide" style="margin-top:8px" data-act="sync-setup">Registration details</button>`;
+    return h + `</section>`;
+  }
   if (!linked()) {
     h += `<p class="hint">Keeps this device and your others in step through one file in
       your own OneDrive, in a folder only this app can see. The app registration is
@@ -3150,9 +3415,20 @@ function syncPanel() {
     <button class="btn" data-act="sync-setup">Registration</button>
     <button class="btn dgr" data-act="sync-out">Disconnect</button>
   </div>
+  <div class="row" style="gap:8px;border:1px solid var(--rule);border-radius:8px;margin-top:10px">
+    <span class="grow"><span class="ttl">Reconnect on its own</span>
+    <span class="meta">${autoReconnect()
+      ? "Renews the sign-in quietly when it lapses"
+      : "Off — you will reconnect by hand"}</span></span>
+    <button class="btn sm${autoReconnect() ? " pri" : ""}" data-act="auto-toggle">${
+      autoReconnect() ? "On" : "Off"}</button>
+  </div>
   <p class="hint" style="margin-top:10px">Changes push a couple of seconds after you make
     them, and the app checks for newer copies when you open or return to it. A browser
-    sign-in lasts 24 hours at most, so expect to tap through a sign-in now and then.
+    sign-in token lasts 24 hours at most and cannot be extended, so the app renews it
+    behind the scenes: first in a hidden frame, and if that is blocked, by bouncing
+    through Microsoft once when you open the app. Ticking <b>Stay signed in</b> at the
+    Microsoft prompt is what makes those renewals silent for weeks.
     Nothing waits on the network: log a trip with no signal and it syncs when you are back.</p>`;
   return h + `</section>`;
 }
@@ -3182,7 +3458,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.08-faa500";
+const APP_VERSION = "2026.09.13-b272cd";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4532,19 +4808,49 @@ document.addEventListener("input", (ev) => {
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape" && $("#sheet").classList.contains("on")) closeSheet();
 });
+
+/* Back: close a sheet first, then walk back through screens, and only leave the
+   app from the entry we started on. */
+window.addEventListener("popstate", (ev) => {
+  if (SHEET_OPEN) { hardCloseSheet(); return; }
+  const st = ev.state;
+  if (st && st.screen) {
+    if (st.screen === "range") RANGEMODE = "trip";
+    go(st.screen, true);
+  }
+});
 $("#scrim").addEventListener("click", closeSheet);
 $("#sheetx").addEventListener("click", closeSheet);
 
 /* ============================================================= INIT ==== */
 S = load();
 if (!localStorage.getItem(KEY)) save({ noRev: true });
-go("home");
+/* The first screen replaces the entry rather than adding one, so back from Home
+   leaves the app as it should. */
+try { history.replaceState({ screen: "home" }, ""); } catch (e) {}
+go("home", true);
 
 /* Finish any sign-in redirect, then reconcile with OneDrive. */
 (async function startSync() {
   if (typeof handleAuthRedirect !== "function") return;
+  /* Inside the silent-renewal frame: take the code, store the token, stop.
+     Rendering or syncing in here would be wasted work at best. */
+  if (typeof framedAuth === "function" && framedAuth()) {
+    await handleAuthRedirect();
+    return;
+  }
   const justLinked = await handleAuthRedirect();
   if (justLinked) { render(); toast("OneDrive connected."); }
+  /* Quietly try to get the sign-in back before giving up and nagging. */
+  if (typeof silentRenew === "function" && typeof lapsed === "function" && lapsed()) {
+    const back = await silentRenew();
+    if (back) { render(); toast("OneDrive sign-in renewed."); }
+    else if (typeof topLevelRenew === "function") {
+      /* Leaves the page if it goes ahead, so nothing after this matters. */
+      const going = await topLevelRenew();
+      if (going) return;
+    }
+  }
   if (typeof syncNow === "function" && linked()) await syncNow(false);
   if (typeof syncDocs === "function") await syncDocs(!syncMeta().error);
   render();
@@ -4553,6 +4859,10 @@ go("home");
 /* Coming back to the app is the moment another device's changes matter. */
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") { if (DIRTY) save({ noRev: true }); return; }
+  if (typeof lapsed === "function" && lapsed() && typeof silentRenew === "function") {
+    silentRenew().then((back) => { if (back) { render(); syncNow(false); } });
+    return;
+  }
   if (typeof syncNow === "function" && Date.now() - LAST_CHECK > 30000) syncNow(false);
 });
 window.addEventListener("online", () => { if (typeof syncNow === "function") syncNow(false); });
