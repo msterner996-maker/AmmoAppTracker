@@ -218,6 +218,37 @@ dl{margin:0}
 .note{background:var(--note-bg);border-radius:8px;padding:10px 12px;
   font-size:0.8125rem;color:var(--note-ink);margin:0 0 12px}
 .note.flag{background:var(--note-flag-bg);color:var(--note-flag-ink)}
+/* ---- target marking ------------------------------------------------------
+   The marking surface is its own layer over everything, because it needs the
+   whole screen and because a canvas cannot live inside a screen div that
+   render() replaces wholesale. */
+.mark{position:fixed;inset:0;z-index:60;display:none;flex-direction:column;
+  background:#101214;touch-action:none;overscroll-behavior:none}
+.mark.on{display:flex}
+.mark canvas{flex:1;width:100%;min-height:0;display:block;touch-action:none}
+.markhead{padding:10px 14px calc(10px + env(safe-area-inset-top)) 14px;
+  background:rgba(16,18,20,0.92);color:#E8E6E1;font-family:var(--sans)}
+.markhead b{display:block;font-size:0.9375rem;font-weight:600}
+.markhead span{display:block;font-size:0.8125rem;color:#A8A49C;margin-top:2px}
+.markbar{padding:10px 12px calc(10px + env(safe-area-inset-bottom)) 12px;
+  background:rgba(16,18,20,0.92);display:flex;gap:8px;align-items:center}
+.markbar .btn{background:#24282B;border-color:#3A3F43;color:#E8E6E1;flex:0 0 auto}
+.markbar .btn.pri{background:var(--brass);border-color:var(--brass);color:#15181A}
+.markbar .btn:disabled{opacity:0.45}
+.markbar .grow{flex:1;min-width:0;color:#A8A49C;font-size:0.8125rem;
+  font-family:var(--sans);text-align:center}
+.markzoom{position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:6px}
+.markzoom button{width:38px;height:38px;border-radius:9px;border:1px solid #3A3F43;
+  background:rgba(36,40,43,0.85);color:#E8E6E1;font-size:1.1rem;line-height:1}
+/* A group's numbers, shown as a card under the photograph. */
+.gnums{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--rule-2);
+  border:1px solid var(--rule-2);border-radius:var(--r);overflow:hidden;margin-top:10px}
+.gnums div{background:var(--card);padding:8px 10px}
+.gnums span{display:block;font-size:0.6875rem;color:var(--ink-3);
+  text-transform:uppercase;letter-spacing:0.04em}
+.gnums b{font-family:var(--mono);font-size:0.9375rem;font-weight:550}
+.gnums em{font-style:normal;font-size:0.75rem;color:var(--ink-3);margin-left:4px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);
   bottom:calc(var(--navh) + 14px);z-index:80;background:var(--toast-bg);color:var(--toast-ink);
   padding:11px 16px;border-radius:9px;font-size:0.875rem;max-width:88vw;
@@ -322,6 +353,7 @@ dl{margin:0}
   <div class="screen" id="sc-velocity"></div>
   <div class="screen" id="sc-nfa"></div>
   <div class="screen" id="sc-tools"></div>
+  <div class="screen" id="sc-targets"></div>
   <div class="screen" id="sc-data"></div>
 </main>
 
@@ -341,6 +373,9 @@ dl{margin:0}
   <button data-go="range">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></svg>
     Range</button>
+  <button data-go="targets">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/><path d="M9.2 7.4 7.8 6M16.4 15.6 17.8 17"/></svg>
+    Targets</button>
 </nav>
 
 <div class="scrim" id="scrim"></div>
@@ -350,10 +385,11 @@ dl{margin:0}
 </div>
 
 <input type="file" id="docfile" accept="application/pdf,.pdf" class="sr">
+<!-- accept is narrowed per owner type by ACT["doc-add"] before the picker opens. -->
 
 <div class="toast" id="toast"><span id="toastmsg"></span><button id="toastact" hidden></button></div>
 <script>
-const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads":[],"trips":[],"velocity":[],"nfa":[],"ledger":[],"containers":[],"schedules":[{"id":"sched-ar","name":"AR maintenance","milestones":[{"rounds":5000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":7500,"task":"Extractor, extractor springs, gas rings."},{"rounds":10000,"task":"Replace BCG and buffer spring. Check barrel accuracy."},{"rounds":12500,"task":"Extractor, extractor springs, gas rings."},{"rounds":15000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":17500,"task":"Extractor, extractor springs, gas rings."},{"rounds":20000,"task":"Replace BCG, buffer spring, and barrel. Inspect the rifle thoroughly."}]}],"docs":[],"rev":0};
+const SEED = {"schemaVersion":1,"firearms":[],"ammo":[],"magTypes":[],"magLoads":[],"trips":[],"velocity":[],"nfa":[],"ledger":[],"containers":[],"schedules":[{"id":"sched-ar","name":"AR maintenance","milestones":[{"rounds":5000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":7500,"task":"Extractor, extractor springs, gas rings."},{"rounds":10000,"task":"Replace BCG and buffer spring. Check barrel accuracy."},{"rounds":12500,"task":"Extractor, extractor springs, gas rings."},{"rounds":15000,"task":"Check BCG lugs and cam pin for cracks. Extractor, extractor springs, gas rings."},{"rounds":17500,"task":"Extractor, extractor springs, gas rings."},{"rounds":20000,"task":"Replace BCG, buffer spring, and barrel. Inspect the rifle thoroughly."}]}],"docs":[],"targets":[],"groups":[],"rev":0};
 </script>
 <script>
 "use strict";
@@ -446,7 +482,8 @@ function migrate(st) {
   });
   if (!st.deviceName && typeof defaultDeviceName === "function") st.deviceName = defaultDeviceName();
   const arrays = ["firearms", "ammo", "magTypes", "magLoads", "trips",
-                  "velocity", "nfa", "containers", "schedules", "ledger", "docs"];
+                  "velocity", "nfa", "containers", "schedules", "ledger", "docs",
+                  "targets", "groups"];
   arrays.forEach((k) => { if (!Array.isArray(st[k])) st[k] = []; });
   st.firearms.forEach((f) => {
     f.barrel = f.barrel || { label: "Factory", rounds: 0, sinceDeepClean: 0, sinceBarrelClean: 0 };
@@ -629,6 +666,7 @@ const SCREENS = {
   home: ["Armory", ""], guns: ["Firearms", ""], ammo: ["Ammunition", ""],
   mags: ["Magazines", ""], range: ["Range", ""], velocity: ["Velocity", ""],
   nfa: ["NFA items", ""], tools: ["Tools", ""], data: ["Data", ""],
+  targets: ["Targets", ""],
 };
 
 /* Android's back gesture walks browser history. With a single-page app that has
@@ -3305,6 +3343,9 @@ function summarise(st) {
     rounds,
     trips: (st.trips || []).filter((t) => t.status === "closed").length,
     fired: (st.firearms || []).reduce((t, f) => t + int(f.receiverRounds), 0),
+    /* A range day marked up on a phone is exactly the work a conflict can
+       lose, so the card has to say which side has it. */
+    groups: (st.groups || []).length,
   };
 }
 
@@ -3318,6 +3359,7 @@ function conflictCard(title, s, tag) {
       <div><span>Rounds</span><b>${fmt(s.rounds)}</b></div>
       <div><span>Trips</span><b>${fmt(s.trips)}</b></div>
       <div><span>Fired</span><b>${fmt(s.fired)}</b></div>
+      ${s.groups ? `<div><span>Groups</span><b>${fmt(s.groups)}</b></div>` : ""}
     </div></div>`;
 }
 
@@ -3587,7 +3629,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.13-39cae5";
+const APP_VERSION = "2026.09.13-4b7ebb";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -3790,27 +3832,65 @@ adoptClientIdFromUrl();
 <script>
 "use strict";
 /* ==========================================================================
-   Paperwork.
+   Attachments.
 
-   PDFs do not go in the state JSON. Base64 inflates a file by a third, the
+   Files do not go in the state JSON. Base64 inflates a file by a third, the
    whole log has to fit in about 5 MB of localStorage, and every sync would
-   re-upload every scan. So:
+   re-upload every one. So:
 
      - the blob lives in IndexedDB, which has real room
-     - each PDF is its own file in OneDrive at Apps/Armory/docs/<id>.pdf
+     - each file is its own object in OneDrive at Apps/Armory/docs/<id>.<ext>
      - the state JSON carries only the metadata, which is what syncs and
        what the conflict logic already protects
 
-   Documents are immutable: added or removed, never edited. That means the
+   Attachments are immutable: added or removed, never edited. That means the
    files themselves cannot conflict, and reconciling is a set comparison
    rather than a merge. Whatever the state says is the truth; OneDrive and
    IndexedDB are both brought into line with it.
+
+   What an attachment belongs to is the owner type. NFA paperwork was the
+   first, target photographs the second; adding a third means an entry in
+   DOC_KINDS and nothing else. Records written before owner types had their
+   own file extensions carry no `ext`, so they are read as PDFs, which is
+   what they are.
    ========================================================================== */
 
 const DOC_DB = "armory-docs";
 const DOC_STORE = "files";
 const DOC_MAX = 4 * 1024 * 1024;   // Graph simple upload comfort zone
-let DOC_TARGET = null;             // which NFA item an attach is destined for
+let DOC_TARGET = null;             // { ownerType, ownerId } an attach is destined for
+
+/* The only extensions an attachment is ever stored under. Anything not here is
+   refused at the door rather than written and puzzled over later. */
+const DOC_TYPES = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+/* One entry per thing that can own an attachment.
+
+     owner   find the owning record, or null if it has gone
+     label   what to call it in a message
+     accept  mime types allowed, and what the file picker asks for
+     refuse  what to say when the file is not one of them
+     after   what to reopen once the list has changed                        */
+const DOC_KINDS = {
+  nfa: {
+    owner: (id) => byId(S.nfa, id),
+    label: (x) => x.model,
+    accept: ["application/pdf"],
+    refuse: "PDFs only. Scan or export the paperwork as a PDF first.",
+    after: (id) => { if (typeof nfaSheet === "function") nfaSheet(id); },
+  },
+};
+
+const docKind = (t) => DOC_KINDS[t] || DOC_KINDS.nfa;
+/* Written before attachments had extensions, so it is paperwork. */
+const docExt = (d) => (d && d.ext) || "pdf";
+const docMime = (d) => (d && d.mime) || "application/pdf";
+const docRemoteName = (d) => `${d.id}.${docExt(d)}`;
 
 function idb() {
   return new Promise((res, rej) => {
@@ -3871,28 +3951,58 @@ function kb(bytes) {
 }
 
 /* -------------------------------------------------------------- attaching */
-ACT["doc-add"] = (ownerId) => {
-  DOC_TARGET = ownerId;
+ACT["doc-add"] = (ownerId, ownerType) => {
+  const type = ownerType || "nfa";
+  DOC_TARGET = { ownerType: type, ownerId };
   const inp = $("#docfile");
   if (!inp) { toast("Cannot open the file picker here."); return; }
+  /* Narrow the picker to what this owner takes, so the camera roll is not
+     offered for a Form 4 and the file browser is not offered for a target. */
+  inp.accept = docKind(type).accept.join(",");
   inp.value = "";
   inp.click();
 };
 
-async function acceptDoc(file) {
-  const ownerId = DOC_TARGET;
-  DOC_TARGET = null;
-  if (!ownerId) return;
-  const item = byId(S.nfa, ownerId);
-  if (!item) { toast("That item no longer exists."); return; }
+/* The mime a browser reports is not always the one you want: some hand back an
+   empty string, and Windows has been known to call a PDF something else. Fall
+   back to the extension, which is what the user can actually see. */
+function docTypeOf(file) {
+  if (DOC_TYPES[file.type]) return file.type;
+  const m = String(file.name || "").match(/\.([a-z0-9]+)$/i);
+  const ext = m ? m[1].toLowerCase() : "";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  return file.type || "";
+}
 
-  const looksPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  if (!looksPdf) { toast("PDFs only. Scan or export the paperwork as a PDF first."); return; }
+/* Attach a file to whatever doc-add last pointed at. Returns the new record so
+   a caller that made the blob itself can carry on with it.
+
+   `silent` is for a caller part-way through a larger action it has already
+   snapshotted: attaching a photograph to a target is one step of committing
+   that target, not an undoable act of its own, and two snapshots for one tap
+   means the first undo strips the photograph and leaves the rest behind. A
+   silent attach takes no snapshot, does not save, and leaves the toast, the
+   reopen and the sync to its caller. */
+async function acceptDoc(file, opts) {
+  const quiet = !!(opts && opts.silent);
+  const target = DOC_TARGET;
+  DOC_TARGET = null;
+  if (!target || !target.ownerId) return null;
+  const { ownerType, ownerId } = target;
+  const kind = docKind(ownerType);
+  const item = kind.owner(ownerId);
+  if (!item) { toast("That item no longer exists."); return null; }
+
+  const mime = docTypeOf(file);
+  if (kind.accept.indexOf(mime) < 0) { toast(kind.refuse); return null; }
   if (file.size > DOC_MAX) {
-    toast(`${kb(file.size)} is too big. Keep scans under 4 MB — reduce the scan resolution.`);
-    return;
+    toast(`${kb(file.size)} is too big. Keep attachments under 4 MB.`);
+    return null;
   }
-  if (!file.size) { toast("That file is empty."); return; }
+  if (!file.size) { toast("That file is empty."); return null; }
 
   const id = uid("doc");
   try {
@@ -3900,19 +4010,23 @@ async function acceptDoc(file) {
   } catch (e) {
     toast("Could not store the file on this device.");
     console.error(e);
-    return;
+    return null;
   }
-  snapshot(`attach ${file.name}`);
+  if (!quiet) snapshot(`attach ${file.name}`);
   S.docs = S.docs || [];
-  S.docs.push({
-    id, ownerType: "nfa", ownerId,
-    name: file.name.replace(/\.pdf$/i, "").slice(0, 80) || "Document",
+  const rec = {
+    id, ownerType, ownerId,
+    name: String(file.name || "").replace(/\.[a-z0-9]+$/i, "").slice(0, 80) || "Attachment",
     size: file.size, addedOn: today(),
-  });
+    ext: DOC_TYPES[mime], mime,
+  };
+  S.docs.push(rec);
+  if (quiet) return rec;
   save();
-  toast(`Attached to ${item.model}.`);
-  nfaSheet(ownerId);
+  toast(`Attached to ${kind.label(item)}.`);
+  kind.after(ownerId);
   if (typeof syncNow === "function" && linked()) syncNow(false);
+  return rec;
 }
 
 /* -------------------------------------------------------------- viewing */
@@ -3922,7 +4036,7 @@ async function docBlob(d) {
   if (b) return b;
   /* Not on this device. It may still be in OneDrive. */
   if (!linked()) return null;
-  const got = await docDownload(d.id);
+  const got = await docDownload(d);
   if (got) { try { await docPut(d.id, got); } catch (e) {} }
   return got;
 }
@@ -3936,12 +4050,12 @@ ACT["doc-open"] = async (docId) => {
     toast("Not on this device, and could not be fetched from OneDrive.");
     return;
   }
-  const url = URL.createObjectURL(b.type ? b : new Blob([b], { type: "application/pdf" }));
+  const url = URL.createObjectURL(b.type ? b : new Blob([b], { type: docMime(d) }));
   const win = window.open(url, "_blank");
   if (!win) {
     /* Blocked, or a standalone app that will not open tabs. Fall back to saving. */
     const a = document.createElement("a");
-    a.href = url; a.download = d.name + ".pdf";
+    a.href = url; a.download = `${d.name}.${docExt(d)}`;
     document.body.appendChild(a); a.click(); a.remove();
   }
   setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -3954,7 +4068,7 @@ ACT["doc-save"] = async (docId) => {
   if (!b) { toast("Not available on this device."); return; }
   const url = URL.createObjectURL(b);
   const a = document.createElement("a");
-  a.href = url; a.download = d.name + ".pdf";
+  a.href = url; a.download = `${d.name}.${docExt(d)}`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 };
@@ -3974,41 +4088,47 @@ ACT["doc-rename-go"] = (docId) => {
   d.name = String(v.nm).trim().slice(0, 80);
   save();
   closeSheet();
-  nfaSheet(d.ownerId);
+  docKind(d.ownerType).after(d.ownerId);
 };
 
 ACT["doc-del"] = async (docId) => {
   const d = byId(S.docs || [], docId);
   if (!d) return;
   if (!confirm(`Delete "${d.name}"? It is removed from this device and from OneDrive.`)) return;
-  const owner = d.ownerId;
+  const owner = d.ownerId, type = d.ownerType;
   snapshot("delete document");
   S.docs = (S.docs || []).filter((x) => x.id !== docId);
   save();
   try { await docDel(docId); } catch (e) {}
   if (typeof syncNow === "function" && linked()) syncNow(false);
   toast("Deleted.");
-  nfaSheet(owner);
+  docKind(type).after(owner);
 };
 
 /* -------------------------------------------------------------- graph */
 const DOC_DIR = `${GRAPH}/me/drive/special/approot:/docs`;
 
+/* Returns { id, name } per remote file. The id is what the state refers to;
+   the full name is what a delete needs, since a stray is by definition not in
+   the state and so has no record to take an extension from. */
 async function docRemoteList() {
   const r = await graph(DOC_DIR + ":/children?$select=name,size");
   if (r.needsAuth) return null;
   if (r.status === 404) return [];
   if (!r.ok) return null;
   const j = await r.res.json().catch(() => ({}));
-  return (j.value || []).map((x) => String(x.name).replace(/\.pdf$/i, ""));
+  return (j.value || []).map((x) => {
+    const name = String(x.name);
+    return { id: name.replace(/\.[a-z0-9]+$/i, ""), name };
+  });
 }
 
-async function docUpload(id) {
+async function docUpload(d) {
   let b = null;
-  try { b = await docGet(id); } catch (e) {}
+  try { b = await docGet(d.id); } catch (e) {}
   if (!b) return false;
-  const r = await graph(`${DOC_DIR}/${id}.pdf:/content`, {
-    method: "PUT", headers: { "Content-Type": "application/pdf" }, body: b,
+  const r = await graph(`${DOC_DIR}/${docRemoteName(d)}:/content`, {
+    method: "PUT", headers: { "Content-Type": docMime(d) }, body: b,
   });
   return !!(r && r.ok);
 }
@@ -4016,8 +4136,8 @@ async function docUpload(id) {
 /* Graph hands back a pre-authenticated URL for content. Fetching that without
    the Authorization header avoids the CORS failure you get by following the
    redirect with credentials attached. */
-async function docDownload(id) {
-  const meta = await graph(`${DOC_DIR}/${id}.pdf?$select=@microsoft.graph.downloadUrl`);
+async function docDownload(d) {
+  const meta = await graph(`${DOC_DIR}/${docRemoteName(d)}?$select=@microsoft.graph.downloadUrl`);
   if (!meta || meta.needsAuth || !meta.ok) return null;
   const j = await meta.res.json().catch(() => ({}));
   const url = j["@microsoft.graph.downloadUrl"];
@@ -4029,8 +4149,8 @@ async function docDownload(id) {
   } catch (e) { return null; }
 }
 
-async function docRemoteDelete(id) {
-  const r = await graph(`${DOC_DIR}/${id}.pdf`, { method: "DELETE" });
+async function docRemoteDelete(name) {
+  const r = await graph(`${DOC_DIR}/${name}`, { method: "DELETE" });
   return !!(r && (r.ok || r.status === 404));
 }
 
@@ -4057,13 +4177,14 @@ async function syncDocs(canGc) {
 
   const remote = await docRemoteList();
   if (remote === null) return;
+  const remoteIds = remote.map((x) => x.id);
 
   for (const d of listed) {
     const here = localKeys.includes(d.id);
-    const there = remote.includes(d.id);
-    if (here && !there) await docUpload(d.id);
+    const there = remoteIds.includes(d.id);
+    if (here && !there) await docUpload(d);
     else if (!here && there) {
-      const b = await docDownload(d.id);
+      const b = await docDownload(d);
       if (b) { try { await docPut(d.id, b); } catch (e) {} }
     }
   }
@@ -4073,8 +4194,8 @@ async function syncDocs(canGc) {
     if (!listed.some((d) => d.id === k)) { try { await docDel(k); } catch (e) {} }
   }
   if (canGc) {
-    for (const id of remote) {
-      if (!listed.some((d) => d.id === id)) await docRemoteDelete(id);
+    for (const x of remote) {
+      if (!listed.some((d) => d.id === x.id)) await docRemoteDelete(x.name);
     }
   }
   setSyncMeta({ docsSig: sig, docsCheckedAt: Date.now() });
@@ -4119,7 +4240,7 @@ function nfaSheet(id) {
         </span></div>`).join("") + `</div>`;
   }
   h += `<button class="btn ${docs.length ? "" : "pri"} wide" style="margin-top:10px"
-    data-act="doc-add" data-id="${esc(id)}">Attach a PDF</button>
+    data-act="doc-add" data-id="${esc(id)}" data-v="nfa">Attach a PDF</button>
     <p class="hint" style="margin-top:8px">${linked()
       ? "Stored on this device and copied to your OneDrive app folder, so it reaches your other devices."
       : "Stored on this device only. Connect OneDrive to have paperwork follow you."}
@@ -4386,6 +4507,1234 @@ function backupPanel() {
     <button class="btn wide" style="margin-top:8px" data-act="backup-diagnose">Check the backups folder</button>
     </section>`;
 }
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Targets.
+
+   A photograph of a target becomes numbers in three steps: calibrate, mark
+   the point of aim, mark the impacts. Everything downstream is arithmetic on
+   the marked coordinates, which is why this part has no interface in it —
+   the maths is testable on its own, and the screens come later.
+
+   Coordinates are stored normalised to the image, 0 to 1 on each axis, with
+   the origin at the top left and y increasing downward the way an image does.
+   Normalised rather than pixels so the stored photograph can be downscaled
+   without moving the marks, and so a better calibration later can be applied
+   to every target already logged.
+
+   The one number that matters is not group size. A five-shot extreme spread
+   uses two of the five shots and has a confidence interval around plus or
+   minus forty per cent, so comparing two loads on one group each is mostly
+   comparing noise. Mean radius uses every shot. The Rayleigh sigma behind it
+   pools across groups and across days, which is the only way to get an
+   estimate tight enough to decide anything. Group size is reported because
+   everyone speaks it, not because it is the best thing here.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- units */
+/* Distance to the target, in inches, whatever it was entered as. */
+function distIn(t) {
+  const d = n(t && t.distance);
+  if (!d) return 0;
+  return (t.distanceUnit === "m") ? d * 39.3700787 : d * 36;
+}
+
+/* A length in the units calibration was entered in, as inches. */
+function refIn(len, unit) {
+  const v = n(len);
+  if (unit === "mm") return v / 25.4;
+  if (unit === "cm") return v / 2.54;
+  return v;
+}
+
+/* True minute of angle: 1 MOA subtends 1.047 inches at 100 yards, not 1.000.
+   The approximation is under half a per cent and nobody would see it on a
+   target, but it compounds in the zero adjustment, so it is done properly. */
+const MOA_RAD = Math.PI / (180 * 60);
+
+function toMoa(inches, t) {
+  const d = distIn(t);
+  return d ? (n(inches) / d) / MOA_RAD : null;
+}
+function toMil(inches, t) {
+  const d = distIn(t);
+  return d ? (n(inches) / d) * 1000 : null;
+}
+function fromMoa(moa, t) { return n(moa) * MOA_RAD * distIn(t); }
+
+/* Bullet diameters for the calibres actually in the log. The cursor is drawn
+   at the size of the hole, so the number wanted is the bullet, not the name:
+   .308 is 0.308 inches but 5.56 is 0.224. Editable wherever it is offered. */
+const BULLET_DIA = {
+  ".22lr": 0.223, ".223": 0.224, "5.56": 0.224, "5.56/.223": 0.224,
+  ".308": 0.308, "30-30": 0.308, ".30-30": 0.308, "308": 0.308,
+  "7.62x39": 0.311, "7.62x54r": 0.311,
+  "9mm": 0.355, ".45acp": 0.452, ".380": 0.355, ".38": 0.357, ".357": 0.357,
+  "6.5cm": 0.264, "6.5creedmoor": 0.264, ".338": 0.338, ".300blk": 0.308,
+};
+function bulletDiaFor(caliber) {
+  const k = String(caliber || "").toLowerCase().replace(/\s+/g, "");
+  return BULLET_DIA[k] || null;
+}
+
+/* ---------------------------------------------------------- calibration */
+/* Calibration stores the image's extent in inches at the target plane, one
+   figure per axis, rather than pixels per inch. Pixels per inch depends on
+   which copy of the photograph you are looking at; inches across the frame
+   does not, so a downscaled image and the full-resolution original give the
+   same answer.
+
+   Two axes rather than one because an off-axis photograph foreshortens one
+   of them. A ten degree tilt is only one and a half per cent on the affected
+   axis and would pass unnoticed in group size, but it lands entirely in the
+   horizontal-against-vertical split, which is the number that is supposed to
+   tell velocity stringing from wind. Calibrating both axes costs one more
+   drag and removes the term. */
+function calibrate(o) {
+  const inH = refIn(o.refLen, o.refUnit);
+  const inV = refIn(o.refLenV == null ? o.refLen : o.refLenV, o.refUnit);
+  const spanH = Math.abs(n(o.spanH));                 // fraction of image width
+  const spanV = o.spanV == null ? null : Math.abs(n(o.spanV));   // of image height
+  if (!(inH > 0) || !(spanH > 0) || !(o.imgW > 0) || !(o.imgH > 0)) return null;
+
+  const widthIn = inH / spanH;
+  /* With only the horizontal marked, assume square pixels and a square-on
+     photograph: the vertical scale is the horizontal one, so the frame's
+     height in inches follows from its aspect ratio. */
+  const heightIn = (spanV > 0 && inV > 0)
+    ? inV / spanV
+    : widthIn * (n(o.imgH) / n(o.imgW));
+
+  return {
+    widthIn, heightIn,
+    refLen: n(o.refLen), refLenV: o.refLenV == null ? null : n(o.refLenV),
+    refUnit: o.refUnit || "in",
+    spanH, spanV: spanV || null,
+    imgW: n(o.imgW), imgH: n(o.imgH),
+    /* Kept for the interface: pixels per inch depends on which copy of the
+       photograph is on screen, so it is derived, never stored as truth. */
+    squared: !!(spanV > 0),
+  };
+}
+
+/* A normalised mark as inches on the target, origin at the top left. */
+function toInches(t, p) {
+  if (!t || !p) return null;
+  return { x: n(p[0]) * n(t.widthIn), y: n(p[1]) * n(t.heightIn) };
+}
+
+/* --------------------------------------------------------------- groups */
+const targetOf = (id) => byId(S.targets || [], id);
+const groupsFor = (targetId) => (S.groups || []).filter((g) => g.targetId === targetId);
+
+/* Every group shot with this rifle and load, in date order. The pair is what
+   an aggregate is keyed on: a different powder charge is a different load and
+   must not be pooled with this one. */
+function groupsOf(firearmId, ammoId) {
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+  return (S.groups || [])
+    .filter((g) => g.firearmId === firearmId && (!ammoId || g.ammoId === ammoId))
+    .filter((g) => ts[g.targetId])
+    .sort((a, b) => String(ts[a.targetId].date || "").localeCompare(String(ts[b.targetId].date || "")));
+}
+
+/* The impacts that count, as inches. Excluded shots are kept in the record
+   and left out of the arithmetic, never deleted: how many were set aside is
+   part of reading the number. */
+function impactsOf(t, g) {
+  const skip = g.excluded || [];
+  return (g.impacts || [])
+    .map((p, i) => (skip.indexOf(i) < 0 ? toInches(t, p) : null))
+    .filter(Boolean);
+}
+
+/* ----------------------------------------------------------- statistics */
+function centroidOf(pts) {
+  let sx = 0, sy = 0;
+  pts.forEach((p) => { sx += p.x; sy += p.y; });
+  return { x: sx / pts.length, y: sy / pts.length };
+}
+
+/* Everything about one group, in inches. Angular values are added by gstats
+   once it knows the distance. */
+function groupStats(pts) {
+  if (!pts || !pts.length) return null;
+  const n0 = pts.length;
+  const c = centroidOf(pts);
+
+  const rs = pts.map((p) => Math.hypot(p.x - c.x, p.y - c.y));
+  const mr = rs.reduce((s, r) => s + r, 0) / n0;
+
+  let es = 0;
+  for (let i = 0; i < n0; i++) {
+    for (let j = i + 1; j < n0; j++) {
+      const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+      if (d > es) es = d;
+    }
+  }
+
+  const sd = (vals) => {
+    if (vals.length < 2) return 0;
+    const m = vals.reduce((s, v) => s + v, 0) / vals.length;
+    return Math.sqrt(vals.reduce((s, v) => s + (v - m) * (v - m), 0) / (vals.length - 1));
+  };
+
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  return {
+    n: n0, centroid: c,
+    es, mr,
+    sdr: sd(rs),
+    sdH: sd(xs), sdV: sd(ys),
+    width: Math.max.apply(null, xs) - Math.min.apply(null, xs),
+    height: Math.max.apply(null, ys) - Math.min.apply(null, ys),
+    sigma: sigmaOf(rs, 1),
+  };
+}
+
+/* The Rayleigh parameter, which is the dispersion everything else derives
+   from. The centroid is estimated from the same shots, so the sum of squared
+   radii carries 2(n - k) degrees of freedom for k groups rather than 2n.
+   Dividing by 2n instead understates the spread, by a fifth on a five-shot
+   group, which is enough to make a load look better than it is. */
+function sigmaOf(radii, groups) {
+  const nn = radii.length, k = groups || 1;
+  const dof = 2 * (nn - k);
+  if (dof <= 0) return null;
+  return Math.sqrt(radii.reduce((s, r) => s + r * r, 0) / dof);
+}
+
+/* Circular error probable and its ninety-fifth percentile cousin: the radius
+   containing half, and ninety-five per cent, of shots. More use than group
+   size for "will this hit", because they answer about the next shot rather
+   than describing the last five. */
+const R50_K = Math.sqrt(2 * Math.log(2));          // 1.1774
+const R95_K = Math.sqrt(2 * Math.log(20));         // 2.4477
+const MR_K = Math.sqrt(Math.PI / 2);               // 1.2533, mean radius per sigma
+
+/* One group, with angular units filled in against the target's distance. */
+function gstats(t, g) {
+  const pts = impactsOf(t, g);
+  const s = groupStats(pts);
+  if (!s) return null;
+  s.excluded = (g.excluded || []).length;
+  s.marked = (g.impacts || []).length;
+  s.esMoa = toMoa(s.es, t); s.esMil = toMil(s.es, t);
+  s.mrMoa = toMoa(s.mr, t); s.mrMil = toMil(s.mr, t);
+  s.widthMoa = toMoa(s.width, t);
+  s.heightMoa = toMoa(s.height, t);
+  if (s.sigma != null) {
+    s.r50 = R50_K * s.sigma;
+    s.r95 = R95_K * s.sigma;
+    s.r50Moa = toMoa(s.r50, t);
+  }
+  s.zero = zeroAdjust(t, g, s.centroid);
+  return s;
+}
+
+/* How far the group sits from where it was aimed, and what to dial to fix it.
+   Precision and zero are separate problems and are never folded together: a
+   rifle can shoot quarter-minute groups a foot from the point of aim, and one
+   of those facts is about the rifle while the other is about the scope. */
+function zeroAdjust(t, g, centroid) {
+  if (!g || !g.poa || !centroid) return null;
+  const poa = toInches(t, g.poa);
+  if (!poa) return null;
+  /* Positive right and positive up are what a turret is marked in, so the
+     vertical sign flips: the image has y increasing downward. */
+  const right = poa.x - centroid.x;
+  const up = centroid.y - poa.y;
+  return {
+    right, up,
+    rightMoa: toMoa(right, t), upMoa: toMoa(up, t),
+    rightMil: toMil(right, t), upMil: toMil(up, t),
+    offset: Math.hypot(right, up),
+  };
+}
+
+/* --------------------------------------------------------- aggregating */
+/* Extreme spread grows with shot count, so averaging it across groups of
+   different sizes compares nothing. These are the expected spreads for a
+   sigma of 1, by Monte Carlo over 400,000 trials per count; the two-shot case
+   agrees with its closed form, sqrt(pi), to four figures. Used only to
+   express a pooled sigma as the group size someone expects to see. */
+const ES_BY_N = {
+  2: 1.7734, 3: 2.4099, 4: 2.7927, 5: 3.0666, 6: 3.2754, 7: 3.4452,
+  8: 3.5853, 9: 3.7062, 10: 3.8097, 12: 3.9877, 15: 4.1949, 20: 4.4505,
+  25: 4.6411, 30: 4.7914,
+};
+function esFactor(shots) {
+  const k = Math.max(2, Math.round(n(shots)));
+  if (ES_BY_N[k]) return ES_BY_N[k];
+  const keys = Object.keys(ES_BY_N).map(Number).sort((a, b) => a - b);
+  if (k > keys[keys.length - 1]) return ES_BY_N[keys[keys.length - 1]];
+  let lo = keys[0];
+  for (const key of keys) { if (key < k) lo = key; else {
+    const hi = key, f = (k - lo) / (hi - lo);
+    return ES_BY_N[lo] + f * (ES_BY_N[hi] - ES_BY_N[lo]);
+  } }
+  return ES_BY_N[lo];
+}
+
+/* Pool several groups into one estimate.
+
+   Each group is shifted onto its own centroid before pooling, which throws
+   away where the groups landed and keeps only how they were spread. That is
+   deliberate: point of impact moves between sessions for reasons that have
+   nothing to do with dispersion — a scope knocked, a different day, a rezero
+   — and letting those shifts into the number would inflate it. Where the
+   groups landed is a zero question and is answered separately. */
+function aggregate(pairs) {
+  const usable = (pairs || []).filter((p) => p.pts && p.pts.length >= 2);
+  if (!usable.length) return null;
+
+  const dev = [];
+  usable.forEach((p) => {
+    const c = centroidOf(p.pts);
+    p.pts.forEach((q) => dev.push(Math.hypot(q.x - c.x, q.y - c.y)));
+  });
+
+  const k = usable.length, N = dev.length;
+  const sigma = sigmaOf(dev, k);
+  if (sigma == null) return null;
+
+  const dof = 2 * (N - k);
+  return {
+    groups: k, shots: N, dof,
+    sigma,
+    mr: MR_K * sigma,
+    r50: R50_K * sigma,
+    r95: R95_K * sigma,
+    /* Mean radius straight off the pooled shots, which is what was actually
+       measured, next to the model's version above. A wide gap between the two
+       says the shots are not landing in a circular normal cloud — a flyer, or
+       real stringing — and that the model's numbers deserve less trust. */
+    mrObserved: dev.reduce((s, r) => s + r, 0) / N,
+    ci: sigmaCI(sigma, dof),
+    /* The group size this dispersion would be expected to produce. */
+    expectedEs: (shots) => esFactor(shots) * sigma,
+  };
+}
+
+/* ------------------------------------------------------- uncertainty */
+/* Regularised lower incomplete gamma, series below the transition and
+   continued fraction above it. Needed for a chi-squared quantile, which is
+   what turns an estimate into an interval. */
+function gammaP(a, x) {
+  if (x <= 0) return 0;
+  const gln = lnGamma(a);
+  if (x < a + 1) {
+    let ap = a, sum = 1 / a, del = sum;
+    for (let i = 0; i < 300; i++) {
+      ap++; del *= x / ap; sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-12) break;
+    }
+    return sum * Math.exp(-x + a * Math.log(x) - gln);
+  }
+  let b = x + 1 - a, c = 1e300, d = 1 / b, h = d;
+  for (let i = 1; i < 300; i++) {
+    const an = -i * (i - a);
+    b += 2; d = an * d + b; if (Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an / c; if (Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < 1e-12) break;
+  }
+  return 1 - Math.exp(-x + a * Math.log(x) - gln) * h;
+}
+
+function lnGamma(z) {
+  const g = [76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+  let x = z, y = z, tmp = x + 5.5;
+  tmp -= (x + 0.5) * Math.log(tmp);
+  let ser = 1.000000000190015;
+  for (let j = 0; j < 6; j++) ser += g[j] / ++y;
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+
+/* Chi-squared quantile by bisection on the distribution function. Exact
+   enough for an interval that is itself an approximation. */
+function chi2inv(p, dof) {
+  if (!(dof > 0)) return null;
+  let lo = 0, hi = Math.max(20, dof * 6);
+  while (gammaP(dof / 2, hi / 2) < p && hi < 1e6) hi *= 2;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (gammaP(dof / 2, mid / 2) < p) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/* A ninety per cent interval on sigma. Worth showing wherever a number is
+   shown: with five shots the interval is roughly plus or minus a third, and
+   a reader who cannot see that will read a difference into two loads that
+   differ by nothing. */
+function sigmaCI(sigma, dof, conf) {
+  if (!(dof > 0) || !(sigma > 0)) return null;
+  const alpha = 1 - (conf || 0.90);
+  const hi = chi2inv(1 - alpha / 2, dof);
+  const lo = chi2inv(alpha / 2, dof);
+  if (!hi || !lo) return null;
+  return { lo: sigma * Math.sqrt(dof / hi), hi: sigma * Math.sqrt(dof / lo), conf: conf || 0.90 };
+}
+
+/* The aggregate for a rifle and load, straight from the log. */
+function aggregateFor(firearmId, ammoId) {
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+  const pairs = groupsOf(firearmId, ammoId)
+    .map((g) => ({ g, t: ts[g.targetId] }))
+    .filter((p) => p.t && n(p.t.widthIn) > 0)
+    .map((p) => ({ pts: impactsOf(p.t, p.g), t: p.t }));
+  const agg = aggregate(pairs);
+  if (!agg) return null;
+  /* Angular units need a distance, and pooling can span several. Where they
+     all match, report it; where they do not, leave it in inches rather than
+     quietly pick one. */
+  const dists = Array.from(new Set(pairs.map((p) => distIn(p.t)).filter(Boolean)));
+  if (dists.length === 1) {
+    const moa = (v) => (v / dists[0]) / MOA_RAD;
+    agg.distIn = dists[0];
+    agg.mrMoa = moa(agg.mr);
+    agg.r50Moa = moa(agg.r50);
+    agg.r95Moa = moa(agg.r95);
+    /* The interval belongs on the mean radius too, since that is the figure
+       anyone will actually compare between loads. */
+    agg.ciMoa = agg.ci ? { lo: moa(MR_K * agg.ci.lo), hi: moa(MR_K * agg.ci.hi) } : null;
+  }
+  return agg;
+}
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Targets: the interface.
+
+   The flow follows the order the job is actually done in, one decision per
+   screen: photograph, calibrate, describe the shot, mark the point of aim,
+   mark the impacts, read the numbers.
+
+   Marking uses a reticle fixed at the centre of the screen with the
+   photograph moving underneath it. That is the opposite of tapping where you
+   want the mark, and it is better for two reasons: your finger is never on
+   top of the thing you are aiming at, and precision comes from zooming in
+   rather than from a steady hand. One finger pans, two pinch, and a button
+   outside the canvas commits. The button being a real element rather than a
+   region of the canvas is what lets a second finger press it without the
+   drag logic ever seeing that pointer.
+
+   Nothing here is committed to the log until the photograph is marked. A
+   flow abandoned halfway leaves no target behind.
+   ========================================================================== */
+
+/* The work in progress. Deliberately not in S: an unfinished target is not a
+   fact about the inventory, and putting it there would push a revision to
+   OneDrive on every tap. */
+let TGT = null;
+let MARKV = { scale: 1, ox: 0, oy: 0 };     // image pixel -> canvas transform
+let MARKP = [];                              // live pointers, for pan and pinch
+let MARKPINCH = null;
+
+/* ------------------------------------------------------------------ steps */
+const TGT_STEPS = {
+  calH: {
+    head: "Calibrate: across",
+    hint: "Line the reticle up on one end of a known horizontal distance, then confirm. Do the other end next.",
+  },
+  calV: {
+    head: "Calibrate: down",
+    hint: "The same length, measured vertically. This removes the error an off-square photograph puts into the vertical.",
+  },
+  poa: { head: "Point of aim", hint: "Where you were aiming, not where the group landed." },
+  impacts: { head: "Impacts", hint: "Centre of each hole. Zoom in; the reticle is the size of the bullet." },
+};
+
+/* ------------------------------------------------------------- the screen */
+RENDER.targets = () => {
+  const tgts = S.targets || [];
+  const groups = S.groups || [];
+
+  let h = `<div class="btnrow" style="margin-bottom:14px">
+    <button class="btn pri wide" data-act="tgt-new">Measure a target</button></div>`;
+
+  if (!groups.length) {
+    return h + `<div class="empty"><b>Nothing measured yet</b>
+      Photograph a target with something of a known size in the frame, mark the
+      holes, and the group size, mean radius and zero correction come out of it.
+      Measure a few and they pool into one estimate per rifle and load, which is
+      worth far more than any single group.</div>`;
+  }
+
+  /* One branch per rifle, with what is inside summarised on the closed
+     branch so the common question is answered without opening anything. */
+  const rifles = [];
+  groups.forEach((g) => { if (rifles.indexOf(g.firearmId) < 0) rifles.push(g.firearmId); });
+
+  const branches = rifles.map((fid) => {
+    const f = gun(fid);
+    const mine = groups.filter((g) => g.firearmId === fid);
+    const agg = aggregateFor(fid, null);
+    return {
+      key: "tgt:" + fid,
+      name: f ? f.name : "Firearm removed",
+      sub: f ? f.caliber : "",
+      count: mine.length,
+      tag: agg && agg.mrMoa != null
+        ? `<span class="tag moss">${agg.mrMoa.toFixed(2)}' MR</span>` : "",
+      body: () => rifleTargets(fid),
+    };
+  });
+
+  h += treeSection({
+    scope: "targets", branches,
+    hint: "Mean radius on the closed branch is every group for that rifle pooled together.",
+  });
+  return h;
+};
+
+/* Per rifle: one row per load with its pooled numbers, then the targets. */
+function rifleTargets(fid) {
+  const mine = (S.groups || []).filter((g) => g.firearmId === fid);
+  const loads = [];
+  mine.forEach((g) => { if (loads.indexOf(g.ammoId) < 0) loads.push(g.ammoId); });
+
+  let h = `<div class="rows">`;
+  loads.forEach((aid) => {
+    const a = ammoOf(aid);
+    const agg = aggregateFor(fid, aid);
+    const gs = mine.filter((g) => g.ammoId === aid);
+    h += `<div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+      <span style="display:flex;gap:10px;align-items:baseline">
+        <span class="grow"><span class="ttl">${esc(a ? ammoLabel(a) : "Load removed")}</span>
+        <span class="meta">${plural(gs.length, "group")} &middot;
+          ${plural(agg ? agg.shots : 0, "shot")}</span></span>
+      </span>`;
+    if (agg) h += aggLine(agg);
+    h += `</div>`;
+  });
+  h += `</div>`;
+
+  /* The targets themselves, newest first. */
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+  const seen = [];
+  mine.forEach((g) => { if (seen.indexOf(g.targetId) < 0) seen.push(g.targetId); });
+  seen.sort((x, y) => String((ts[y] || {}).date || "").localeCompare(String((ts[x] || {}).date || "")));
+
+  h += `<div class="rows" style="margin-top:10px">`;
+  seen.forEach((tid) => {
+    const t = ts[tid];
+    if (!t) return;
+    const gs = mine.filter((g) => g.targetId === tid);
+    const first = gstats(t, gs[0]);
+    h += `<div class="row" data-act="tgt-open" data-id="${esc(tid)}">
+      <span class="grow"><span class="ttl">${esc(dshow(t.date))}${
+        t.notes ? " &middot; " + esc(String(t.notes).slice(0, 40)) : ""}</span>
+      <span class="meta">${fmt(t.distance)}${esc(t.distanceUnit || "yd")} &middot;
+        ${plural(gs.length, "group")}${first && first.esMoa != null
+          ? " &middot; " + first.esMoa.toFixed(2) + "' group" : ""}</span></span>
+      <span class="chev">&rsaquo;</span></div>`;
+  });
+  return h + `</div>`;
+}
+
+/* The pooled estimate, with its interval. The interval is not decoration:
+   without it two loads that differ by nothing look different. */
+function aggLine(agg) {
+  const mr = agg.mrMoa != null ? agg.mrMoa.toFixed(2) + "'" : agg.mr.toFixed(3) + '"';
+  const ci = agg.ciMoa
+    ? `${agg.ciMoa.lo.toFixed(2)} to ${agg.ciMoa.hi.toFixed(2)}`
+    : null;
+  return `<span class="meta" style="font-family:var(--mono)">
+    Mean radius ${esc(mr)}${ci ? ` &middot; 90% ${esc(ci)}` : ""}
+    &middot; expected ${fmt(5)}-shot group ${esc(
+      agg.distIn ? ((agg.expectedEs(5) / agg.distIn) / MOA_RAD).toFixed(2) + "'"
+                 : agg.expectedEs(5).toFixed(2) + '"')}</span>`;
+}
+
+/* ------------------------------------------------------------- capturing */
+ACT["tgt-new"] = () => {
+  if (!(S.firearms || []).length) { toast("Add a firearm first."); return; }
+  /* The photograph is attached through the same machinery as paperwork, so
+     it syncs, is fetched on demand, and is cleaned up by the same reconcile.
+     The target record it belongs to has to exist first. */
+  const t = {
+    id: uid("tg"), date: today(), distance: 100, distanceUnit: "yd",
+    measured: false, notes: "", createdAt: new Date().toISOString(),
+  };
+  TGT = { target: t, committed: false, groups: [], current: null, step: null };
+  DOC_TARGET = { ownerType: "target", ownerId: t.id };
+  const inp = $("#docfile");
+  if (!inp) { toast("Cannot open the file picker here."); return; }
+  inp.accept = "image/*";
+  inp.value = "";
+  inp.click();
+};
+
+/* Called by acceptDoc's owner lookup while the target is still in TGT rather
+   than in the log, so the kind looks in both places. */
+function targetRecord(id) {
+  if (TGT && TGT.target.id === id) return TGT.target;
+  return targetOf(id);
+}
+
+DOC_KINDS.target = {
+  owner: (id) => targetRecord(id),
+  label: () => "the target",
+  accept: ["image/jpeg", "image/png", "image/webp"],
+  refuse: "A photograph, please: JPEG, PNG or WebP.",
+  after: () => {},
+};
+
+/* Take the picked photograph, hold the full-resolution copy for marking, and
+   keep a downscaled one for storage. Marking at full resolution and storing
+   small is the whole trick: the marks are normalised, so the stored copy can
+   be a fraction of the size without moving anything. */
+const TGT_STORE_PX = 1600;
+
+async function targetPhoto(file) {
+  if (!TGT) return;
+  let bmp = null;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (e) {
+    /* Older engines ignore the orientation option; try without it rather
+       than refusing the photograph outright. */
+    try { bmp = await createImageBitmap(file); } catch (e2) { bmp = null; }
+  }
+  if (!bmp) { toast("That image could not be read."); TGT = null; return; }
+
+  TGT.bmp = bmp;
+  TGT.target.imgW = bmp.width;
+  TGT.target.imgH = bmp.height;
+  TGT.cal = { refLen: 1, refUnit: "in" };
+  TGT.marks = [];
+  targetStep("calH");
+}
+
+/* Shrink for storage and hand the result to the attachment module. */
+async function targetStore() {
+  if (!TGT || !TGT.bmp) return null;
+  const bmp = TGT.bmp;
+  const scale = Math.min(1, TGT_STORE_PX / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
+  const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.85));
+  if (!blob) return null;
+  blob.name = "target-" + TGT.target.date + ".jpg";
+  DOC_TARGET = { ownerType: "target", ownerId: TGT.target.id };
+  /* Silent: groupDone has already snapshotted and will save, so attaching
+     must not become a second undo step. */
+  return acceptDoc(blob, { silent: true });
+}
+
+/* -------------------------------------------------------------- the layer */
+function markLayer() {
+  let el = $("#mark");
+  if (el) return el;
+  el = document.createElement("div");
+  el.className = "mark";
+  el.id = "mark";
+  el.innerHTML = `
+    <div class="markhead"><b id="markhead"></b><span id="markhint"></span></div>
+    <canvas id="markcv"></canvas>
+    <div class="markzoom">
+      <button data-act="tgt-zoom" data-id="in" aria-label="Zoom in">+</button>
+      <button data-act="tgt-zoom" data-id="out" aria-label="Zoom out">&minus;</button>
+    </div>
+    <div class="markbar">
+      <button class="btn" data-act="tgt-cancel">Cancel</button>
+      <button class="btn" data-act="tgt-undo" id="markundo">Undo</button>
+      <span class="grow" id="markcount"></span>
+      <button class="btn" data-act="tgt-skip" id="markskip">Skip</button>
+      <button class="btn pri" data-act="tgt-confirm">Confirm</button>
+    </div>`;
+  document.body.appendChild(el);
+  const cv = el.querySelector("#markcv");
+  cv.addEventListener("pointerdown", markDown);
+  cv.addEventListener("pointermove", markMove);
+  cv.addEventListener("pointerup", markUp);
+  cv.addEventListener("pointercancel", markUp);
+  return el;
+}
+
+function targetStep(step) {
+  if (!TGT) return;
+  TGT.step = step;
+  const el = markLayer();
+  el.classList.add("on");
+  const spec = TGT_STEPS[step] || { head: "", hint: "" };
+  el.querySelector("#markhead").textContent = spec.head;
+  el.querySelector("#markhint").textContent = spec.hint;
+  markFit();
+  markPaint();
+}
+
+function markClose() {
+  const el = $("#mark");
+  if (el) el.classList.remove("on");
+}
+
+/* Fit the photograph to the canvas the first time it is shown. */
+function markFit() {
+  const cv = $("#markcv");
+  if (!cv || !TGT || !TGT.bmp) return;
+  const r = cv.getBoundingClientRect();
+  cv.width = Math.max(1, Math.round(r.width * (window.devicePixelRatio || 1)));
+  cv.height = Math.max(1, Math.round(r.height * (window.devicePixelRatio || 1)));
+  const s = Math.min(cv.width / TGT.bmp.width, cv.height / TGT.bmp.height);
+  MARKV = {
+    scale: s,
+    ox: (cv.width - TGT.bmp.width * s) / 2,
+    oy: (cv.height - TGT.bmp.height * s) / 2,
+  };
+}
+
+/* Where the reticle is, in image pixels, then normalised. */
+function markPoint() {
+  const cv = $("#markcv");
+  if (!cv) return null;
+  const ix = (cv.width / 2 - MARKV.ox) / MARKV.scale;
+  const iy = (cv.height / 2 - MARKV.oy) / MARKV.scale;
+  return [ix / TGT.bmp.width, iy / TGT.bmp.height];
+}
+
+const markToScreen = (p) => ({
+  x: p[0] * TGT.bmp.width * MARKV.scale + MARKV.ox,
+  y: p[1] * TGT.bmp.height * MARKV.scale + MARKV.oy,
+});
+
+/* The reticle is drawn at the size of the hole the bullet makes, which is
+   only possible once the scale is known, so before calibration it is a plain
+   crosshair. */
+function markReticlePx() {
+  if (!TGT || !TGT.target.widthIn || !TGT.target.bulletDia) return 0;
+  const pxPerIn = (TGT.bmp.width * MARKV.scale) / TGT.target.widthIn;
+  return Math.max(6, TGT.target.bulletDia * pxPerIn);
+}
+
+function markPaint() {
+  const cv = $("#markcv");
+  if (!cv || !TGT || !TGT.bmp) return;
+  const g = cv.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.fillStyle = "#101214";
+  g.fillRect(0, 0, cv.width, cv.height);
+
+  g.imageSmoothingQuality = "high";
+  g.drawImage(TGT.bmp, MARKV.ox, MARKV.oy,
+    TGT.bmp.width * MARKV.scale, TGT.bmp.height * MARKV.scale);
+
+  const dpr = window.devicePixelRatio || 1;
+
+  /* Calibration marks, and the line between a pair. */
+  (TGT.marks || []).forEach((m) => {
+    const p = markToScreen(m);
+    g.strokeStyle = "#E9B44C"; g.lineWidth = 2 * dpr;
+    g.beginPath(); g.moveTo(p.x - 9 * dpr, p.y); g.lineTo(p.x + 9 * dpr, p.y);
+    g.moveTo(p.x, p.y - 9 * dpr); g.lineTo(p.x, p.y + 9 * dpr); g.stroke();
+  });
+  if ((TGT.marks || []).length === 2) {
+    const a = markToScreen(TGT.marks[0]), b = markToScreen(TGT.marks[1]);
+    g.strokeStyle = "rgba(233,180,76,0.7)"; g.lineWidth = 1.5 * dpr;
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+  }
+
+  const cur = TGT.current;
+  if (cur) {
+    if (cur.poa) {
+      const p = markToScreen(cur.poa);
+      g.strokeStyle = "#7FB069"; g.lineWidth = 2 * dpr;
+      g.beginPath(); g.arc(p.x, p.y, 11 * dpr, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(p.x - 16 * dpr, p.y); g.lineTo(p.x + 16 * dpr, p.y);
+      g.moveTo(p.x, p.y - 16 * dpr); g.lineTo(p.x, p.y + 16 * dpr); g.stroke();
+    }
+    const r = markReticlePx() / 2 || 7 * dpr;
+    (cur.impacts || []).forEach((m, i) => {
+      const p = markToScreen(m);
+      g.strokeStyle = "#E9B44C"; g.lineWidth = 1.75 * dpr;
+      g.beginPath(); g.arc(p.x, p.y, Math.max(5 * dpr, r), 0, 7); g.stroke();
+      g.fillStyle = "rgba(233,180,76,0.95)";
+      g.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+      g.fillText(String(i + 1), p.x + Math.max(5 * dpr, r) + 3 * dpr, p.y - 3 * dpr);
+    });
+  }
+
+  /* The reticle, last, so nothing covers it. */
+  const cx = cv.width / 2, cy = cv.height / 2;
+  const rr = markReticlePx() / 2;
+  g.strokeStyle = "#FF4D4D"; g.lineWidth = 1.5 * dpr;
+  if (rr > 3) { g.beginPath(); g.arc(cx, cy, rr, 0, 7); g.stroke(); }
+  g.beginPath();
+  g.moveTo(cx - 26 * dpr, cy); g.lineTo(cx - (rr > 3 ? rr + 3 * dpr : 3 * dpr), cy);
+  g.moveTo(cx + (rr > 3 ? rr + 3 * dpr : 3 * dpr), cy); g.lineTo(cx + 26 * dpr, cy);
+  g.moveTo(cx, cy - 26 * dpr); g.lineTo(cx, cy - (rr > 3 ? rr + 3 * dpr : 3 * dpr));
+  g.moveTo(cx, cy + (rr > 3 ? rr + 3 * dpr : 3 * dpr)); g.lineTo(cx, cy + 26 * dpr);
+  g.stroke();
+
+  markChrome();
+}
+
+function markChrome() {
+  const el = $("#mark");
+  if (!el || !TGT) return;
+  const step = TGT.step;
+  const cur = TGT.current;
+  const count = el.querySelector("#markcount");
+  const skip = el.querySelector("#markskip");
+  const undo = el.querySelector("#markundo");
+
+  if (step === "calH" || step === "calV") {
+    count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
+    skip.hidden = step !== "calV";
+    skip.textContent = "Skip";
+    undo.hidden = !(TGT.marks || []).length;
+  } else if (step === "poa") {
+    count.textContent = "aim point";
+    skip.hidden = true;
+    undo.hidden = true;
+  } else {
+    const n0 = ((cur && cur.impacts) || []).length;
+    count.textContent = n0 ? plural(n0, "impact") : "no impacts yet";
+    skip.hidden = false;
+    skip.textContent = "Done";
+    undo.hidden = !n0;
+  }
+}
+
+/* ------------------------------------------------------------- gestures */
+function markDown(ev) {
+  const cv = ev.currentTarget;
+  cv.setPointerCapture(ev.pointerId);
+  MARKP.push({ id: ev.pointerId, x: ev.clientX, y: ev.clientY });
+  if (MARKP.length === 2) MARKPINCH = pinchState();
+}
+
+function pinchState() {
+  const [a, b] = MARKP;
+  return {
+    dist: Math.hypot(a.x - b.x, a.y - b.y),
+    mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+    scale: MARKV.scale, ox: MARKV.ox, oy: MARKV.oy,
+  };
+}
+
+function markMove(ev) {
+  const p = MARKP.find((q) => q.id === ev.pointerId);
+  if (!p) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (MARKP.length === 1) {
+    MARKV.ox += (ev.clientX - p.x) * dpr;
+    MARKV.oy += (ev.clientY - p.y) * dpr;
+    p.x = ev.clientX; p.y = ev.clientY;
+  } else if (MARKP.length === 2 && MARKPINCH) {
+    p.x = ev.clientX; p.y = ev.clientY;
+    const [a, b] = MARKP;
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (MARKPINCH.dist > 4) {
+      const k = d / MARKPINCH.dist;
+      const s = Math.max(0.05, Math.min(60, MARKPINCH.scale * k));
+      /* Keep the point under the pinch centre where it was. */
+      const mx = MARKPINCH.mx * dpr, my = MARKPINCH.my * dpr;
+      MARKV.ox = mx - (mx - MARKPINCH.ox) * (s / MARKPINCH.scale);
+      MARKV.oy = my - (my - MARKPINCH.oy) * (s / MARKPINCH.scale);
+      MARKV.scale = s;
+    }
+  }
+  markPaint();
+}
+
+function markUp(ev) {
+  MARKP = MARKP.filter((q) => q.id !== ev.pointerId);
+  if (MARKP.length < 2) MARKPINCH = null;
+  if (MARKP.length === 2) MARKPINCH = pinchState();
+}
+
+ACT["tgt-zoom"] = (dir) => {
+  const cv = $("#markcv");
+  if (!cv) return;
+  const k = dir === "in" ? 1.6 : 1 / 1.6;
+  const s = Math.max(0.05, Math.min(60, MARKV.scale * k));
+  const cx = cv.width / 2, cy = cv.height / 2;
+  MARKV.ox = cx - (cx - MARKV.ox) * (s / MARKV.scale);
+  MARKV.oy = cy - (cy - MARKV.oy) * (s / MARKV.scale);
+  MARKV.scale = s;
+  markPaint();
+};
+
+/* ------------------------------------------------------------- confirming */
+ACT["tgt-confirm"] = () => {
+  if (!TGT) return;
+  const p = markPoint();
+  if (!p) return;
+  const step = TGT.step;
+
+  if (step === "calH" || step === "calV") {
+    TGT.marks.push(p);
+    if (TGT.marks.length === 2) calDone(step);
+    else markPaint();
+    return;
+  }
+  if (step === "poa") {
+    TGT.current = { id: uid("gp"), targetId: TGT.target.id, poa: p, impacts: [], excluded: [] };
+    targetStep("impacts");
+    return;
+  }
+  TGT.current.impacts.push(p);
+  markPaint();
+};
+
+ACT["tgt-undo"] = () => {
+  if (!TGT) return;
+  if (TGT.step === "calH" || TGT.step === "calV") TGT.marks.pop();
+  else if (TGT.current) TGT.current.impacts.pop();
+  markPaint();
+};
+
+ACT["tgt-cancel"] = () => {
+  if (!confirm("Discard this target? Nothing has been saved yet.")) return;
+  TGT = null;
+  markClose();
+  render();
+};
+
+ACT["tgt-skip"] = () => {
+  if (!TGT) return;
+  if (TGT.step === "calV") { calSkip(); return; }
+  if (TGT.step === "impacts") { groupDone(); return; }
+};
+
+/* A pair of calibration marks becomes a span. Which axis it measures decides
+   which span it fills. */
+function calDone(step) {
+  const [a, b] = TGT.marks;
+  const span = step === "calH" ? Math.abs(a[0] - b[0]) : Math.abs(a[1] - b[1]);
+  if (!(span > 0.002)) {
+    toast("Those two marks are almost on top of each other. Zoom in and try again.");
+    TGT.marks = [];
+    markPaint();
+    return;
+  }
+  if (step === "calH") { TGT.cal.spanH = span; TGT.marks = []; calSheet("h"); }
+  else { TGT.cal.spanV = span; TGT.marks = []; calApply(); }
+}
+
+function calSkip() {
+  TGT.marks = [];
+  TGT.cal.spanV = null;
+  calApply();
+}
+
+/* Ask what the marked distance actually was. Asked after marking rather than
+   before, because you do not know which increment you can hold the reticle on
+   until you are looking at the photograph. */
+function calSheet(axis) {
+  markClose();
+  const u = TGT.cal.refUnit || "in";
+  openSheet("How long was that?", `
+    <p class="hint">The real distance between the two marks. A longer reference is
+      a smaller error for the same effort, so use the longest increment you could
+      hold the reticle on.</p>
+    <label class="f"><span>Distance</span>
+      <input name="len" type="number" step="0.01" inputmode="decimal"
+        value="${esc(String(TGT.cal.refLen || 1))}"></label>
+    <label class="f"><span>Units</span>
+      <select name="unit">
+        <option value="in"${u === "in" ? " selected" : ""}>inches</option>
+        <option value="cm"${u === "cm" ? " selected" : ""}>centimetres</option>
+        <option value="mm"${u === "mm" ? " selected" : ""}>millimetres</option>
+      </select></label>
+    <div class="note">Printers shrink a page when they are set to fit it. If this
+      target came off your own printer, measure a gridline with a ruler once and use
+      that figure rather than what the file says.</div>
+    <button class="btn pri wide" data-act="tgt-callen" data-id="${esc(axis)}">Continue</button>`);
+}
+
+ACT["tgt-callen"] = (axis) => {
+  const v = readForm($("#sheetbody"));
+  const len = n(v.len);
+  if (!(len > 0)) { toast("That length needs to be above zero."); return; }
+  TGT.cal.refLen = len;
+  TGT.cal.refUnit = v.unit || "in";
+  closeSheet();
+  if (axis === "h") targetStep("calV");
+  else calApply();
+};
+
+/* Both spans known: turn them into the target's extent in inches. */
+function calApply() {
+  const c = calibrate({
+    refLen: TGT.cal.refLen, refUnit: TGT.cal.refUnit,
+    spanH: TGT.cal.spanH, spanV: TGT.cal.spanV,
+    imgW: TGT.target.imgW, imgH: TGT.target.imgH,
+  });
+  if (!c) { toast("That calibration did not work out. Start again."); TGT = null; markClose(); render(); return; }
+  Object.assign(TGT.target, {
+    widthIn: c.widthIn, heightIn: c.heightIn, squared: c.squared,
+    refLen: c.refLen, refUnit: c.refUnit, spanH: c.spanH, spanV: c.spanV,
+  });
+  setupSheet();
+}
+
+/* ---------------------------------------------------------------- setup */
+function setupSheet() {
+  markClose();
+  const t = TGT.target;
+  const g = TGT.current;
+  const lastF = (S.groups || []).length ? S.groups[S.groups.length - 1].firearmId : null;
+  const fid = (g && g.firearmId) || lastF || (S.firearms[0] || {}).id;
+  const f = gun(fid);
+  const dia = t.bulletDia || (f ? bulletDiaFor(f.caliber) : null) || 0.224;
+
+  openSheet("The shot", `
+    <label class="f"><span>Firearm</span>
+      <select name="firearmId" data-act-change="tgt-gunpick" id="tgtgun">
+        ${selOptsGrouped(S.firearms, fid, (x) => x.name, (x) => x.caliber || "Caliber not set")}
+      </select></label>
+    <label class="f"><span>Load</span>
+      <select name="ammoId">${selOptsGrouped(S.ammo,
+        (g && g.ammoId) || lastAmmoFor(f ? f.caliber : "") || (S.ammo[0] || {}).id,
+        (x) => ammoLabel(x), (x) => x.caliber || "Caliber not set")}
+      </select></label>
+    <div class="f2">
+      <label class="f"><span>Distance</span>
+        <input name="distance" type="number" inputmode="numeric" value="${esc(String(t.distance || 100))}"></label>
+      <label class="f"><span>Units</span>
+        <select name="distanceUnit">
+          <option value="yd"${t.distanceUnit !== "m" ? " selected" : ""}>yards</option>
+          <option value="m"${t.distanceUnit === "m" ? " selected" : ""}>metres</option>
+        </select></label>
+    </div>
+    <label class="f"><span>Bullet diameter (inches)</span>
+      <input name="bulletDia" type="number" step="0.001" inputmode="decimal" id="tgtdia"
+        value="${esc(String(dia))}"></label>
+    <p class="hint">Sets the size of the reticle, so it covers the hole rather than
+      guessing at its middle. It is the bullet, not the calibre name: 5.56 is a .224.</p>
+    <div class="f2">
+      <label class="f"><span>Date</span>
+        <input name="date" type="date" value="${esc(t.date)}"></label>
+      <label class="f"><span>Temperature (&deg;F)</span>
+        <input name="tempF" type="number" inputmode="numeric" value="${esc(String(t.tempF == null ? "" : t.tempF))}"></label>
+    </div>
+    <label class="f"><span>Notes</span>
+      <textarea name="notes" placeholder="Wind, position, barrel, anything worth knowing later">${esc(t.notes || "")}</textarea></label>
+    <button class="btn pri wide" data-act="tgt-setup-go">Mark the point of aim</button>`);
+}
+
+/* Changing the firearm refills the bullet diameter, unless it was typed over. */
+ACT["tgt-gunpick"] = () => {
+  const sel = $("#tgtgun"), dia = $("#tgtdia");
+  if (!sel || !dia) return;
+  const f = gun(sel.value);
+  const d = f ? bulletDiaFor(f.caliber) : null;
+  if (d) dia.value = String(d);
+};
+
+ACT["tgt-setup-go"] = () => {
+  const v = readForm($("#sheetbody"));
+  if (!v.firearmId) { toast("Pick the firearm."); return; }
+  if (!(n(v.distance) > 0)) { toast("The distance needs to be above zero."); return; }
+  Object.assign(TGT.target, {
+    distance: n(v.distance), distanceUnit: v.distanceUnit || "yd",
+    bulletDia: n(v.bulletDia) || 0.224,
+    date: v.date || today(),
+    tempF: v.tempF === "" || v.tempF == null ? null : n(v.tempF),
+    notes: v.notes || "",
+  });
+  TGT.pick = { firearmId: v.firearmId, ammoId: v.ammoId };
+  closeSheet();
+  targetStep("poa");
+};
+
+/* ------------------------------------------------------------- finishing */
+/* One group is done. Everything up to here has been held outside the log; the
+   commit is a single snapshot so one undo puts it all back. */
+async function groupDone() {
+  if (!TGT || !TGT.current) return;
+  const g = TGT.current;
+  if (!g.impacts.length) { toast("Mark at least one impact, or cancel."); return; }
+  g.firearmId = TGT.pick.firearmId;
+  g.ammoId = TGT.pick.ammoId;
+
+  markClose();
+  snapshot(TGT.committed ? "add a group" : "measure a target");
+
+  if (!TGT.committed) {
+    S.targets = S.targets || [];
+    S.targets.push(TGT.target);
+    TGT.committed = true;
+    const rec = await targetStore();
+    if (rec) { TGT.target.docId = rec.id; }
+  }
+  S.groups = S.groups || [];
+  S.groups.push(g);
+  TGT.groups.push(g.id);
+  TGT.current = null;
+  save();
+  render();
+  targetSheet(TGT.target.id);
+}
+
+/* Another group on the same photograph, possibly a different rifle. */
+ACT["tgt-another"] = () => {
+  if (!TGT || !TGT.bmp) { toast("That photograph is no longer open for marking."); return; }
+  closeSheet();
+  setupSheet();
+};
+
+ACT["tgt-done"] = () => {
+  if (TGT && TGT.bmp && TGT.bmp.close) { try { TGT.bmp.close(); } catch (e) {} }
+  TGT = null;
+  closeSheet();
+  markClose();
+  render();
+};
+
+/* ---------------------------------------------------------------- results */
+ACT["tgt-open"] = (id) => targetSheet(id);
+
+function targetSheet(id) {
+  const t = targetOf(id);
+  if (!t) { closeSheet(); return; }
+  const gs = groupsFor(id);
+
+  let h = `<dl class="card">
+    <div class="kv"><dt>Date</dt><dd style="font-family:var(--sans)">${esc(dshow(t.date))}</dd></div>
+    <div class="kv"><dt>Distance</dt><dd>${fmt(t.distance)} ${esc(t.distanceUnit || "yd")}</dd></div>
+    <div class="kv"><dt>Calibrated on</dt><dd>${esc(String(t.refLen))} ${esc(t.refUnit || "in")}${
+      t.squared ? ", both axes" : ", across only"}</dd></div>
+    ${t.tempF != null ? `<div class="kv"><dt>Temperature</dt><dd>${fmt(t.tempF)}&deg;F</dd></div>` : ""}
+  </dl>`;
+  if (!t.squared) {
+    h += `<div class="note" style="margin-top:10px">Only the horizontal was calibrated,
+      so the split between horizontal and vertical spread carries whatever tilt was in
+      the photograph. Group size and mean radius are unaffected.</div>`;
+  }
+  if (t.notes) h += `<div class="note" style="margin-top:10px">${esc(t.notes)}</div>`;
+
+  gs.forEach((g) => {
+    const s = gstats(t, g);
+    const f = gun(g.firearmId), a = ammoOf(g.ammoId);
+    h += `<section class="blk" style="margin-top:16px">
+      <h2 style="font-size:1rem">${esc(f ? f.name : "Firearm removed")}</h2>
+      <p class="hint">${esc(a ? ammoLabel(a) : "Load removed")}</p>`;
+    h += s ? groupNums(s, t) : `<div class="empty"><b>No impacts marked</b></div>`;
+    h += `<span class="btnrow" style="margin-top:8px">
+      <button class="btn sm dgr" data-act="tgt-gdel" data-id="${esc(g.id)}">Delete group</button>
+      </span></section>`;
+  });
+
+  const fid = gs.length ? gs[0].firearmId : null;
+  const aid = gs.length ? gs[0].ammoId : null;
+  if (fid) {
+    const agg = aggregateFor(fid, aid);
+    if (agg && agg.groups > 1) {
+      h += `<section class="blk" style="margin-top:16px">
+        <h2 style="font-size:1rem">Pooled, this rifle and load</h2>
+        <p class="hint">${plural(agg.groups, "group")}, ${plural(agg.shots, "shot")}.
+          Each group is centred on itself first, so a scope moved between sessions does
+          not count as spread.</p>${aggNums(agg)}</section>`;
+    }
+  }
+
+  h += `<div class="btnrow" style="margin-top:16px;flex-direction:column">
+    ${TGT && TGT.target.id === id && TGT.bmp
+      ? `<button class="btn pri wide" data-act="tgt-another">Mark another group on this target</button>
+         <button class="btn wide" style="margin-top:8px" data-act="tgt-done">Finished</button>`
+      : `<button class="btn wide dgr" data-act="tgt-del" data-id="${esc(id)}">Delete this target</button>`}
+    </div>`;
+
+  openSheet(dshow(t.date) + " target", h);
+}
+
+function num(label, value, unit) {
+  return `<div><span>${esc(label)}</span><b>${esc(value)}</b>${
+    unit ? `<em>${esc(unit)}</em>` : ""}</div>`;
+}
+
+function groupNums(s, t) {
+  const inch = (v) => v.toFixed(3) + '"';
+  const moa = (v) => (v == null ? "\u2014" : v.toFixed(2) + "'");
+  let h = `<div class="gnums">
+    ${num("Shots", fmt(s.n) + (s.excluded ? ` of ${fmt(s.marked)}` : ""))}
+    ${num("Group", moa(s.esMoa), inch(s.es))}
+    ${num("Mean radius", moa(s.mrMoa), inch(s.mr))}
+    ${num("Width \u00d7 height", moa(s.widthMoa) + " \u00d7 " + moa(s.heightMoa))}
+    ${num("Horizontal SD", inch(s.sdH))}
+    ${num("Vertical SD", inch(s.sdV))}`;
+  if (s.r50 != null) h += num("R50", moa(s.r50Moa), inch(s.r50));
+  if (s.zero) {
+    h += num("Windage", (s.zero.rightMoa >= 0 ? "R " : "L ") + Math.abs(s.zero.rightMoa).toFixed(2) + "'");
+    h += num("Elevation", (s.zero.upMoa >= 0 ? "U " : "D ") + Math.abs(s.zero.upMoa).toFixed(2) + "'");
+  }
+  h += `</div>`;
+  if (s.n < 5) {
+    h += `<p class="hint" style="margin-top:8px">${plural(s.n, "shot")} is a small sample.
+      Shoot more groups with this load and the pooled figure below will mean something;
+      one group on its own mostly measures luck.</p>`;
+  }
+  void t;
+  return h;
+}
+
+function aggNums(agg) {
+  const moa = (v) => (v == null ? "\u2014" : v.toFixed(2) + "'");
+  let h = `<div class="gnums">
+    ${num("Groups", fmt(agg.groups))}
+    ${num("Shots", fmt(agg.shots))}
+    ${num("Mean radius", moa(agg.mrMoa), agg.mr.toFixed(3) + '"')}
+    ${num("R50", moa(agg.r50Moa))}
+    ${num("R95", moa(agg.r95Moa))}
+    ${num("Expected 5-shot group", agg.distIn
+      ? ((agg.expectedEs(5) / agg.distIn) / MOA_RAD).toFixed(2) + "'"
+      : agg.expectedEs(5).toFixed(3) + '"')}
+  </div>`;
+  if (agg.ciMoa) {
+    h += `<p class="hint" style="margin-top:8px">Mean radius is somewhere between
+      ${esc(agg.ciMoa.lo.toFixed(2))}' and ${esc(agg.ciMoa.hi.toFixed(2))}' with ninety per
+      cent confidence. Two loads whose intervals overlap have not been told apart.</p>`;
+  }
+  /* The measured mean radius against the one the model predicts. A wide gap
+     says the shots are not a round cloud, so the percentile figures above are
+     worth less than they look. */
+  const drift = Math.abs(agg.mrObserved - agg.mr) / agg.mr;
+  if (drift > 0.15) {
+    h += `<p class="hint" style="margin-top:6px">The measured mean radius is
+      ${esc((drift * 100).toFixed(0))}% away from what a round group would give, so these
+      shots are stringing or carrying a flyer. R50 and R95 assume a round group.</p>`;
+  }
+  return h;
+}
+
+ACT["tgt-gdel"] = (gid) => {
+  const g = byId(S.groups || [], gid);
+  if (!g) return;
+  if (!confirm("Delete this group? The photograph and any other groups on it stay.")) return;
+  const tid = g.targetId;
+  snapshot("delete group");
+  S.groups = (S.groups || []).filter((x) => x.id !== gid);
+  commit("Group deleted.");
+  targetSheet(tid);
+};
+
+ACT["tgt-del"] = (id) => {
+  const t = targetOf(id);
+  if (!t) return;
+  const gs = groupsFor(id);
+  if (!confirm(`Delete this target and ${plural(gs.length, "group")}? The photograph goes too.`)) return;
+  snapshot("delete target");
+  S.groups = (S.groups || []).filter((g) => g.targetId !== id);
+  S.targets = (S.targets || []).filter((x) => x.id !== id);
+  S.docs = (S.docs || []).filter((d) => !(d.ownerType === "target" && d.ownerId === id));
+  commit("Target deleted.");
+  closeSheet();
+};
 </script>
 <script>
 "use strict";
@@ -4902,6 +6251,12 @@ document.addEventListener("change", (ev) => {
     return;
   }
   if (t.id === "docfile" && t.files && t.files[0]) {
+    /* A target photograph is marked before it is stored, so it goes to the
+       targets flow; everything else is attached as it stands. */
+    if (typeof TGT !== "undefined" && TGT && !TGT.bmp && typeof targetPhoto === "function") {
+      targetPhoto(t.files[0]);
+      return;
+    }
     if (typeof acceptDoc === "function") acceptDoc(t.files[0]);
     return;
   }
