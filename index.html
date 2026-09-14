@@ -3650,7 +3650,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-c52b87";
+const APP_VERSION = "2026.09.14-57311b";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4903,6 +4903,17 @@ function zeroAdjust(t, g, centroid) {
   };
 }
 
+/* Where a group landed relative to where it was aimed, in inches. Positive is
+   right and up, the way a turret is marked. */
+function zeroOf(t, g) {
+  const pts = impactsOf(t, g);
+  if (!pts.length || !g.poa) return null;
+  const c = centroidOf(pts);
+  const poa = toInches(t, g.poa);
+  if (!poa) return null;
+  return { right: poa.x - c.x, up: c.y - poa.y };
+}
+
 /* --------------------------------------------------------- aggregating */
 /* Extreme spread grows with shot count, so averaging it across groups of
    different sizes compares nothing. These are the expected spreads for a
@@ -4955,6 +4966,29 @@ function aggregate(pairs) {
   const sigma = sigmaOf(dev, k);
   if (sigma == null) return null;
 
+  /* Zero is the one thing that genuinely averages across groups.
+
+     Dispersion had to be pooled by centring each group on itself, because
+     where a group landed says nothing about how tightly it shot. The offset
+     from the aim point is the opposite: each group is one noisy measurement of
+     the same quantity, so the mean of them is a better estimate than any one,
+     and the scatter among them says how much to trust it. A standard error is
+     worth more here than another decimal place. */
+  const zs = usable.map((p) => p.zero).filter(Boolean);
+  let zero = null;
+  if (zs.length) {
+    const mean = (f) => zs.reduce((t2, z) => t2 + f(z), 0) / zs.length;
+    const right = mean((z) => z.right), up = mean((z) => z.up);
+    const se = (f, m) => {
+      if (zs.length < 2) return null;
+      const v = zs.reduce((t2, z) => t2 + (f(z) - m) * (f(z) - m), 0) / (zs.length - 1);
+      return Math.sqrt(v / zs.length);
+    };
+    zero = { right, up, n: zs.length,
+      seRight: se((z) => z.right, right), seUp: se((z) => z.up, up),
+      offset: Math.hypot(right, up) };
+  }
+
   const dof = 2 * (N - k);
   return {
     groups: k, shots: N, dof,
@@ -4970,6 +5004,8 @@ function aggregate(pairs) {
     ci: sigmaCI(sigma, dof),
     /* Whether these groups look like repeats of one thing. */
     consistency: consistency(per),
+    /* The average correction to dial, and how sure of it to be. */
+    zero,
     /* The group size this dispersion would be expected to produce. */
     expectedEs: (shots) => esFactor(shots) * sigma,
   };
@@ -5186,7 +5222,8 @@ function aggregateFor(firearmId, ammoId, opts) {
     atDist = all - pairs.length;
   }
 
-  const agg = aggregate(pairs.map((p) => ({ pts: impactsOf(p.t, p.g), t: p.t })));
+  const agg = aggregate(pairs.map((p) => ({
+    pts: impactsOf(p.t, p.g), t: p.t, zero: zeroOf(p.t, p.g) })));
   if (!agg) return null;
 
   /* How much was left out, and why. Shown on the face of the figure: a pooled
@@ -6670,14 +6707,27 @@ function targetSheet(id) {
 
   const fid = gs.length ? gs[0].firearmId : null;
   const aid = gs.length ? gs[0].ammoId : null;
+
   if (fid) {
-    const agg = aggregateFor(fid, aid);
-    if (agg && agg.groups > 1) {
+    /* This photograph on its own: same rifle, same load, same conditions,
+       minutes apart. The strongest case for pooling there is. */
+    const day = aggregateTarget(id, fid, aid);
+    if (day) {
       h += `<section class="blk" style="margin-top:16px">
-        <h2 style="font-size:1rem">Pooled, this rifle and load</h2>
-        <p class="hint">${plural(agg.groups, "group")}, ${plural(agg.shots, "shot")}.
-          Each group is centred on itself first, so a scope moved between sessions does
-          not count as spread.</p>${aggNums(agg)}</section>`;
+        <h2 style="font-size:1rem">This target, pooled</h2>
+        <p class="hint">${plural(day.groups, "group")} on one photograph. Each is centred
+          on itself before pooling, so where they landed does not count as spread; the
+          zero correction below is averaged across them, which is the one figure that
+          does improve by being taken together.</p>${aggNums(day)}</section>`;
+    }
+    /* And everything ever shot at this distance with this rifle and load. */
+    const all = aggregateFor(fid, aid, { distIn: distIn(t) });
+    if (all && all.groups > (day ? day.groups : 1)) {
+      h += `<section class="blk" style="margin-top:16px">
+        <h2 style="font-size:1rem">Every ${esc(distLabel(distIn(t), t.distanceUnit))} group,
+          this rifle and load</h2>
+        <p class="hint">${plural(all.groups, "group")}, ${plural(all.shots, "shot")}.</p>
+        ${aggNums(all)}</section>`;
     }
   }
 
@@ -6725,7 +6775,13 @@ function groupNums(s, t) {
   return h;
 }
 
-function aggNums(agg, t) {
+/* Takes only the aggregate. It used to take the target as well, and a call
+   site that had drifted to passing one argument turned every angular figure
+   into a dash while the inches beside them stayed right — a failure that looks
+   like broken statistics and is really a missing parameter. The distance is in
+   the aggregate; there is no reason to ask for it twice. */
+function aggNums(agg) {
+  const t = { distance: agg.distIn || agg.bucketIn || 0, distanceUnit: "in_raw" };
   const sz = (v) => showLen(v, t, "size");
   let h = `<div class="gnums">
     ${num("Groups", fmt(agg.groups))}
@@ -6735,6 +6791,24 @@ function aggNums(agg, t) {
     ${num("R95", sz(agg.r95))}
     ${num("Expected 5-shot group", sz(agg.expectedEs(5)))}
   </div>`;
+
+  /* The average correction, which is the figure to actually dial. One group
+     gives a noisy version of it; several give a better one and say how noisy. */
+  if (agg.zero) {
+    const z = agg.zero;
+    const zr = (v) => showLen(Math.abs(v), t, "zero");
+    h += `<div class="gnums">
+      ${num("Windage, average", (z.right >= 0 ? "R " : "L ") + zr(z.right),
+        z.seRight != null ? "\u00b1 " + zr(z.seRight) : "")}
+      ${num("Elevation, average", (z.up >= 0 ? "U " : "D ") + zr(z.up),
+        z.seUp != null ? "\u00b1 " + zr(z.seUp) : "")}
+    </div>`;
+    if (z.seRight != null && (Math.abs(z.right) < 2 * z.seRight && Math.abs(z.up) < 2 * z.seUp)) {
+      h += `<p class="hint" style="margin-top:6px">The average offset is smaller than the
+        scatter between groups, so there is no correction here worth dialling \u2014 this
+        rifle is already zeroed as well as these groups can tell.</p>`;
+    }
+  }
   if (agg.consistency && !agg.consistency.consistent) {
     h += `<p class="hint flag" style="margin-top:8px;color:var(--flag)">These groups vary
       more than chance alone explains, so they may not be repeats of the same thing \u2014
