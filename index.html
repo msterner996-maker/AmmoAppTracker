@@ -241,6 +241,9 @@ dl{margin:0}
   display:flex;flex-direction:column;gap:6px}
 .markzoom button{width:38px;height:38px;border-radius:9px;border:1px solid #3A3F43;
   background:rgba(36,40,43,0.85);color:#E8E6E1;font-size:1.1rem;line-height:1}
+/* The overlay editor reuses the marking layer's chrome. */
+.markbar select{background:#24282B;border:1px solid #3A3F43;color:#E8E6E1;
+  border-radius:7px;padding:7px 8px;font-size:0.8125rem;font-family:var(--sans);min-width:0}
 /* A group's numbers, shown as a card under the photograph. */
 .gnums{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--rule-2);
   border:1px solid var(--rule-2);border-radius:var(--r);overflow:hidden;margin-top:10px}
@@ -3629,7 +3632,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-b10af1";
+const APP_VERSION = "2026.09.14-817a5a";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -5068,10 +5071,6 @@ const TGT_STEPS = {
     head: "Calibrate",
     hint: "Both ends of a distance you know. Use the longest one on the target \u2014 six inches is far better than one.",
   },
-  calV: {
-    head: "Second reference",
-    hint: "Optional, and a check rather than a correction: a second distance, ideally across the other way.",
-  },
   poa: { head: "Point of aim", hint: "Where you were aiming, not where the group landed." },
   measure: {
     head: "Check the scale",
@@ -5501,7 +5500,7 @@ function markPaint() {
      printed gridlines and over bullet holes in black paper, and lime is the
      one colour that reads against both. A placed mark changes colour so that
      what is done and what is being placed can never be confused. */
-  const calibrating = TGT.step === "calH" || TGT.step === "calV" || TGT.step === "measure";
+  const calibrating = TGT.step === "calH" || TGT.step === "measure";
   const reticle = "#32FF32";
   const cx = cv.width / 2, cy = cv.height / 2;
   const rr = calibrating ? 0 : markReticlePx() / 2;
@@ -5541,10 +5540,9 @@ function markChrome() {
     if (back) back.textContent = "Done";
     return;
   }
-  if (step === "calH" || step === "calV") {
+  if (step === "calH") {
     count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
-    skip.hidden = step !== "calV";
-    skip.textContent = "Skip";
+    skip.hidden = true;
     undo.hidden = !(TGT.marks || []).length;
   } else if (step === "poa") {
     count.textContent = "aim point";
@@ -5676,18 +5674,12 @@ ACT["tgt-back"] = () => {
 
   /* Part-way through a pair of calibration marks: drop them and start the
      pair again rather than leaving the stage. */
-  if ((step === "calH" || step === "calV" || step === "measure") && (TGT.marks || []).length) {
+  if ((step === "calH" || step === "measure") && (TGT.marks || []).length) {
     TGT.marks = [];
     markPaint();
     return;
   }
   if (step === "calH") { ACT["tgt-cancel"](); return; }
-  if (step === "calV") {
-    TGT.cal.spanless = true;
-    TGT.marks = [];
-    calSheet("h", true);
-    return;
-  }
   if (step === "poa") { setupSheet(); return; }
   if (step === "impacts") {
     /* Going back from impacts means remarking the aim point, and the impacts
@@ -5716,7 +5708,6 @@ ACT["tgt-cancel"] = () => {
 
 ACT["tgt-skip"] = () => {
   if (!TGT) return;
-  if (TGT.step === "calV") { calSkip(); return; }
   if (TGT.step === "impacts") { groupDone(); return; }
 };
 
@@ -5737,22 +5728,16 @@ function calDone(step) {
   }
   TGT.cal.pending = px;
   TGT.marks = [];
-  calSheet(step === "calH" ? "h" : "v");
-}
-
-function calSkip() {
-  TGT.marks = [];
-  calApply();
+  calSheet("h");
 }
 
 /* Ask what the marked distance actually was. Asked after marking rather than
    before, because you do not know which increment you can hold the reticle on
    until you are looking at the photograph. */
-function calSheet(axis, again) {
+function calSheet() {
   markClose();
   const u = TGT.cal.refUnit || "in";
   const cur = TGT.cal.lastLen || 1;
-  void again;
   /* What this reference will cost, in scale error, at the length being
      entered. Shown live because it is the single biggest lever on accuracy
      and it is completely invisible otherwise. */
@@ -5774,20 +5759,20 @@ function calSheet(axis, again) {
     <div class="note">Printers shrink a page when they are set to fit it. If this
       target came off your own printer, measure a gridline with a ruler once and use
       that figure rather than what the file says.</div>
-    <button class="btn pri wide" data-act="tgt-callen" data-id="${esc(axis)}">Continue</button>`);
+    <button class="btn pri wide" data-act="tgt-callen">Continue</button>`);
 }
 
 /* Marking error is a few pixels however careful you are, so its effect on the
    scale is set almost entirely by how long the reference is. */
+/* Only worth saying when it is bad enough to matter. Below ten per cent the
+   figure is a distraction: it is smaller than the sampling noise on any group
+   you would measure, and a running commentary on a number that is nearly
+   always fine just teaches you to ignore the box. */
 function slipNote(slip) {
-  if (slip == null) return "";
+  if (slip == null || slip < 0.10) return "";
   const pct = slip * 100;
-  if (pct < 0.4) return `A reference this long holds the scale to about
-    ${pct.toFixed(2)}%, which is better than anything else in the measurement.`;
-  if (pct < 1.2) return `This reference holds the scale to roughly ${pct.toFixed(1)}%.
-    Acceptable, though a longer one costs nothing.`;
-  return `<b>A reference this short leaves about ${pct.toFixed(1)}% of scale error</b>, and
-    every figure on this target will be wrong by that much in the same direction.
+  return `<b>A reference this short leaves about ${pct.toFixed(0)}% of scale error</b>, and
+    every figure on this target would be wrong by that much in the same direction.
     Use the longest known distance on the target instead.`;
 }
 
@@ -5809,9 +5794,14 @@ ACT["tgt-callen"] = (axis) => {
   TGT.cal.refUnit = v.unit || "in";
   TGT.cal.lastLen = len;
   TGT.cal.pending = null;
-  if (axis === "h") { closeSheet(); targetStep("calV"); return; }
-  /* calApply opens the next sheet itself. Closing this one first pops a
+  /* One reference and straight on. A second was offered for a while as a
+     check; it was skipped almost every time, and the thing it checked for is
+     better answered by the ruler on the results sheet, which can be pointed at
+     anything rather than only at what was marked during setup.
+
+     calApply opens the next sheet itself. Closing this one first pops a
      history entry and opening pushes one straight back, and the two race. */
+  void axis;
   calApply();
 };
 
@@ -5853,15 +5843,7 @@ function setupSheet() {
      taken square-on. It is reported rather than corrected, because a pair of
      scale factors is not what perspective looks like and pretending otherwise
      makes the numbers worse, not better. */
-  const spread = t.spread;
-  const skewNote = (spread != null && spread > 0.02)
-    ? `<div class="note flag">The two references disagree by
-        ${esc((spread * 100).toFixed(0))}%, which means this photograph was taken about
-        ${esc(Math.round(Math.acos(1 / (1 + spread)) * 180 / Math.PI))} degrees off square.
-        The scale used is the average, so group size is close; the split between
-        horizontal and vertical spread is the part not to trust. Photograph square-on
-        if that split matters.</div>`
-    : "";
+  const skewNote = "";
 
   openSheet("The shot", skewNote + `
     <label class="f"><span>Firearm</span>
@@ -6118,18 +6100,14 @@ function targetSheet(id) {
       esc(n(t.heightIn).toFixed(2))}&#8243;</dd></div>
     ${t.tempF != null ? `<div class="kv"><dt>Temperature</dt><dd>${fmt(t.tempF)}&deg;F</dd></div>` : ""}
   </dl>`;
-  if (t.slip != null && t.slip > 0.012) {
+  if (t.slip != null && t.slip > 0.10) {
     h += `<div class="note flag" style="margin-top:10px">This target was calibrated on
       ${esc(n(t.shortestIn).toFixed(2))}&#8243;, which leaves roughly
       ${esc((t.slip * 100).toFixed(1))}% of scale error. Every figure below is wrong by
       about that much, all in the same direction. Recalibrating on a longer reference
       fixes it without remarking anything.</div>`;
   }
-  if (t.spread != null && t.spread > 0.02) {
-    h += `<div class="note" style="margin-top:10px">The references disagreed by
-      ${esc((t.spread * 100).toFixed(0))}%, so this photograph was off square. Group size is
-      close; the horizontal-against-vertical split is the part not to trust.</div>`;
-  }
+
   if (t.notes) h += `<div class="note" style="margin-top:10px">${esc(t.notes)}</div>`;
 
   gs.forEach((g) => {
@@ -6158,10 +6136,11 @@ function targetSheet(id) {
   }
 
   h += `<div class="btnrow" style="margin-top:16px;flex-direction:column">
-    <button class="btn wide" data-act="tgt-measure" data-id="${esc(id)}">Check the scale</button>
+    <button class="btn pri wide" data-act="tgt-overlay" data-id="${esc(id)}">Overlay and share</button>
+    <button class="btn wide" style="margin-top:8px" data-act="tgt-measure" data-id="${esc(id)}">Check the scale</button>
     <button class="btn wide" style="margin-top:8px" data-act="tgt-recal" data-id="${esc(id)}">Recalibrate</button>
     ${TGT && TGT.target.id === id && TGT.bmp && !TGT.measuring
-      ? `<button class="btn pri wide" style="margin-top:8px" data-act="tgt-another">Mark another group on this target</button>
+      ? `<button class="btn wide" style="margin-top:8px" data-act="tgt-another">Mark another group on this target</button>
          <button class="btn wide" style="margin-top:8px" data-act="tgt-done">Finished</button>`
       : `<button class="btn wide dgr" style="margin-top:8px" data-act="tgt-del" data-id="${esc(id)}">Delete this target</button>`}
     </div>`;
@@ -6251,6 +6230,441 @@ ACT["tgt-del"] = (id) => {
   commit("Target deleted.");
   closeSheet();
 };
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   The overlay.
+
+   A photograph of the target with the impacts ringed and the numbers printed
+   beside them, as one image worth sending to somebody.
+
+   Everything is drawn on a canvas, including the data card, and the same
+   drawing function paints the screen and the exported file. That is the point:
+   a card laid out as an HTML element and then redrawn for export is two
+   implementations that will disagree sooner or later, usually about text
+   wrapping, and what you send is then not what you arranged. One path means
+   what you see is what comes out.
+
+   Positions are stored as fractions of the image rather than pixels, so the
+   card sits where you put it whether it is drawn on a phone screen or into a
+   1600-pixel export.
+   ========================================================================== */
+
+let OVL = null;
+
+const OVL_DEF = { cx: 0.035, cy: 0.035, size: 1, numbers: true, poa: true,
+                  ring: true, which: "all" };
+
+/* Fields the card can carry. Kept small on purpose: a card with everything on
+   it is a table, and a table beside a photograph is not what anyone reads. */
+const OVL_ROWS = [
+  { k: "group", label: "Group" },
+  { k: "mr", label: "Mean radius" },
+  { k: "shots", label: "Shots" },
+  { k: "dist", label: "Distance" },
+  { k: "zero", label: "Zero" },
+  { k: "r50", label: "R50" },
+];
+
+ACT["tgt-overlay"] = async (id) => {
+  const t = targetOf(id);
+  if (!t) return;
+  const gs = groupsFor(id);
+  if (!gs.length) { toast("Mark a group on this target first."); return; }
+  const bmp = await targetBitmap(t);
+  if (!bmp) { toast("The photograph is not on this device."); return; }
+
+  OVL = Object.assign({}, OVL_DEF, t.overlay || {}, {
+    target: t, groups: gs, bmp,
+    rows: (t.overlay && t.overlay.rows) || ["group", "mr", "shots", "dist"],
+  });
+  OVL.view = null;
+  closeSheet();
+  ovlLayer().classList.add("on");
+  ovlFit();
+  ovlPaint();
+};
+
+function ovlLayer() {
+  let el = $("#ovl");
+  if (el) return el;
+  el = document.createElement("div");
+  el.className = "mark";
+  el.id = "ovl";
+  el.innerHTML = `
+    <div class="markhead"><b>Overlay</b>
+      <span>Drag the card where you want it. What you see is what gets shared.</span></div>
+    <canvas id="ovlcv"></canvas>
+    <div class="markzoom">
+      <button data-ovl="bigger" aria-label="Bigger card">A+</button>
+      <button data-ovl="smaller" aria-label="Smaller card">A-</button>
+    </div>
+    <div class="markbar">
+      <button class="btn" data-ovl="close">Close</button>
+      <select id="ovlwhich" data-ovl-change="1"></select>
+      <button class="btn" data-ovl="fields">Fields</button>
+      <button class="btn pri" data-ovl="share">Share</button>
+    </div>`;
+  document.body.appendChild(el);
+
+  const cv = el.querySelector("#ovlcv");
+  cv.addEventListener("pointerdown", ovlDown);
+  cv.addEventListener("pointermove", ovlMove);
+  cv.addEventListener("pointerup", ovlUp);
+  cv.addEventListener("pointercancel", ovlUp);
+
+  el.querySelectorAll("[data-ovl]").forEach((b) => {
+    b.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      ovlAct(b.dataset.ovl);
+    });
+  });
+  el.querySelector("#ovlwhich").addEventListener("change", (ev) => {
+    OVL.which = ev.target.value;
+    ovlPaint();
+  });
+  return el;
+}
+
+function ovlFit() {
+  const cv = $("#ovlcv");
+  if (!cv || !OVL) return;
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const s = Math.min(cv.width / OVL.bmp.width, cv.height / OVL.bmp.height);
+  OVL.view = { scale: s,
+    ox: (cv.width - OVL.bmp.width * s) / 2,
+    oy: (cv.height - OVL.bmp.height * s) / 2 };
+
+  const sel = $("#ovlwhich");
+  if (sel) {
+    sel.innerHTML = `<option value="all">All groups</option>` + OVL.groups.map((g, i) => {
+      const f = gun(g.firearmId);
+      return `<option value="${esc(g.id)}"${OVL.which === g.id ? " selected" : ""}>${
+        esc(f ? f.name : "Group " + (i + 1))}</option>`;
+    }).join("");
+  }
+}
+
+const ovlShown = () => (OVL.which === "all"
+  ? OVL.groups : OVL.groups.filter((g) => g.id === OVL.which));
+
+/* ------------------------------------------------------------- drawing */
+/* Draws the whole picture into a context, at whatever size is asked for.
+   `out` is the width the drawing is being made at, which is what every
+   thickness and text size is expressed as a fraction of — so the export at
+   full resolution looks like the phone screen rather than like the phone
+   screen with hairlines. */
+function ovlDraw(g, o) {
+  const { bmp, target: t } = OVL;
+  const sc = o.scale, ox = o.ox, oy = o.oy;
+  const W = bmp.width * sc;
+  const unit = W / 1000;                    // one thousandth of the image width
+
+  g.fillStyle = "#0B0C0D";
+  g.fillRect(0, 0, o.w, o.h);
+  g.drawImage(bmp, ox, oy, W, bmp.height * sc);
+
+  const pt = (p) => ({ x: p[0] * W + ox, y: p[1] * bmp.height * sc + oy });
+  const groups = ovlShown();
+
+  groups.forEach((grp) => {
+    const s = gstats(t, grp);
+    if (!s) return;
+    const pxPerIn = W / n(t.widthIn);
+    const r = Math.max(6 * unit, (n(t.bulletDia) || 0.224) * pxPerIn / 2);
+
+    if (OVL.poa && grp.poa) {
+      const p = pt(grp.poa);
+      g.strokeStyle = "rgba(255,255,255,0.6)"; g.lineWidth = 4 * unit;
+      g.beginPath(); g.arc(p.x, p.y, 9 * unit, 0, 7); g.stroke();
+      g.strokeStyle = "#12379B"; g.lineWidth = 2 * unit;
+      g.beginPath(); g.arc(p.x, p.y, 9 * unit, 0, 7); g.stroke();
+      g.beginPath();
+      g.moveTo(p.x - 15 * unit, p.y); g.lineTo(p.x - 3 * unit, p.y);
+      g.moveTo(p.x + 3 * unit, p.y); g.lineTo(p.x + 15 * unit, p.y);
+      g.moveTo(p.x, p.y - 15 * unit); g.lineTo(p.x, p.y - 3 * unit);
+      g.moveTo(p.x, p.y + 3 * unit); g.lineTo(p.x, p.y + 15 * unit);
+      g.stroke();
+    }
+
+    /* The circle that contains the group, centred on where it actually went
+       rather than on where it was aimed. It is the extreme spread made
+       visible, which is the thing people argue about in a photograph. */
+    if (OVL.ring && s.n > 1) {
+      const c = { x: (s.centroid.x / n(t.widthIn)) * W + ox,
+                  y: (s.centroid.y / n(t.heightIn)) * bmp.height * sc + oy };
+      g.strokeStyle = "rgba(233,180,76,0.75)";
+      g.lineWidth = 1.6 * unit;
+      g.setLineDash([7 * unit, 5 * unit]);
+      g.beginPath(); g.arc(c.x, c.y, (s.es / 2) * pxPerIn + r, 0, 7); g.stroke();
+      g.setLineDash([]);
+    }
+
+    const skip = grp.excluded || [];
+    (grp.impacts || []).forEach((m, i) => {
+      const p = pt(m);
+      const out = skip.indexOf(i) > -1;
+      g.strokeStyle = out ? "rgba(190,80,70,0.9)" : "#32FF32";
+      g.lineWidth = 2.2 * unit;
+      g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.stroke();
+      if (OVL.numbers) {
+        g.font = `600 ${13 * unit}px ui-sans-serif, system-ui, sans-serif`;
+        g.textBaseline = "middle";
+        const lbl = String(i + 1);
+        const lx = p.x + r + 4 * unit, ly = p.y - r - 2 * unit;
+        g.lineWidth = 3 * unit; g.strokeStyle = "rgba(0,0,0,0.75)";
+        g.strokeText(lbl, lx, ly);
+        g.fillStyle = out ? "#E08B80" : "#32FF32";
+        g.fillText(lbl, lx, ly);
+      }
+    });
+  });
+
+  ovlCard(g, o, unit);
+}
+
+/* The card. Measured first, then drawn, so the panel is exactly as big as its
+   contents at whatever scale it is being drawn. */
+function ovlCard(g, o, unit) {
+  const t = OVL.target;
+  const groups = ovlShown();
+  const lines = ovlLines(groups, t);
+  if (!lines.length) return;
+
+  const k = unit * OVL.size;
+  const pad = 14 * k;
+  const titleSize = 16 * k, rowSize = 14 * k, gap = 7 * k;
+
+  g.font = `600 ${titleSize}px ui-sans-serif, system-ui, sans-serif`;
+  let wide = g.measureText(lines[0].title).width;
+  g.font = `${rowSize}px ui-monospace, SFMono-Regular, monospace`;
+  lines.forEach((l) => {
+    (l.rows || []).forEach((r) => {
+      wide = Math.max(wide, g.measureText(r[0] + "   " + r[1]).width);
+    });
+  });
+
+  let rows = 0;
+  lines.forEach((l) => { rows += 1 + (l.rows || []).length; });
+  const boxW = wide + pad * 2;
+  const boxH = pad * 2 + rows * (rowSize + gap) + (lines.length - 1) * gap;
+
+  /* Keep it on the picture however far it is dragged. */
+  const maxX = o.w - boxW, maxY = o.h - boxH;
+  const x = Math.max(0, Math.min(maxX, OVL.cx * o.w));
+  const y = Math.max(0, Math.min(maxY, OVL.cy * o.h));
+  OVL.box = { x, y, w: boxW, h: boxH };
+
+  g.fillStyle = "rgba(12,14,16,0.82)";
+  g.strokeStyle = "rgba(233,180,76,0.55)";
+  g.lineWidth = 1.4 * k;
+  const rr = 10 * k;
+  g.beginPath();
+  g.moveTo(x + rr, y);
+  g.arcTo(x + boxW, y, x + boxW, y + boxH, rr);
+  g.arcTo(x + boxW, y + boxH, x, y + boxH, rr);
+  g.arcTo(x, y + boxH, x, y, rr);
+  g.arcTo(x, y, x + boxW, y, rr);
+  g.closePath();
+  g.fill(); g.stroke();
+
+  let ty = y + pad + rowSize * 0.5;
+  g.textBaseline = "middle";
+  lines.forEach((l, i) => {
+    if (i) ty += gap;
+    g.font = `600 ${titleSize}px ui-sans-serif, system-ui, sans-serif`;
+    g.fillStyle = "#E9B44C";
+    g.fillText(l.title, x + pad, ty);
+    ty += rowSize + gap;
+    g.font = `${rowSize}px ui-monospace, SFMono-Regular, monospace`;
+    (l.rows || []).forEach((r) => {
+      g.fillStyle = "#9A968E";
+      g.fillText(r[0], x + pad, ty);
+      g.fillStyle = "#EDEBE6";
+      const vw = g.measureText(r[1]).width;
+      g.fillText(r[1], x + pad + wide - vw, ty);
+      ty += rowSize + gap;
+    });
+  });
+}
+
+function ovlLines(groups, t) {
+  const want = OVL.rows || [];
+  return groups.map((grp) => {
+    const s = gstats(t, grp);
+    const f = gun(grp.firearmId), a = ammoOf(grp.ammoId);
+    const rows = [];
+    if (!s) return { title: f ? f.name : "Group", rows };
+    want.forEach((k) => {
+      if (k === "group") rows.push(["Group", showLen(s.es, t, "size")]);
+      if (k === "mr") rows.push(["Mean radius", showLen(s.mr, t, "size")]);
+      if (k === "shots") rows.push(["Shots", String(s.n)]);
+      if (k === "dist") rows.push(["Distance", `${fmt(t.distance)} ${t.distanceUnit || "yd"}`]);
+      if (k === "r50" && s.r50 != null) rows.push(["R50", showLen(s.r50, t, "size")]);
+      if (k === "zero" && s.zero) {
+        rows.push(["Windage", (s.zero.right >= 0 ? "R " : "L ") + showLen(Math.abs(s.zero.right), t, "zero")]);
+        rows.push(["Elevation", (s.zero.up >= 0 ? "U " : "D ") + showLen(Math.abs(s.zero.up), t, "zero")]);
+      }
+    });
+    const sub = [a ? ammoLabel(a) : null, dshow(t.date)].filter(Boolean).join("  \u00b7  ");
+    if (sub) rows.unshift(["", sub]);
+    return { title: f ? f.name : "Group", rows };
+  });
+}
+
+function ovlPaint() {
+  const cv = $("#ovlcv");
+  if (!cv || !OVL || !OVL.view) return;
+  const g = cv.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  ovlDraw(g, { w: cv.width, h: cv.height, scale: OVL.view.scale,
+    ox: OVL.view.ox, oy: OVL.view.oy });
+}
+
+/* --------------------------------------------------------------- dragging */
+let OVLDRAG = null;
+
+function ovlDown(ev) {
+  if (!OVL || !OVL.box) return;
+  const cv = ev.currentTarget;
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
+  const b = OVL.box;
+  if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) return;
+  cv.setPointerCapture(ev.pointerId);
+  OVLDRAG = { id: ev.pointerId, dx: x - b.x, dy: y - b.y };
+}
+
+function ovlMove(ev) {
+  if (!OVLDRAG || OVLDRAG.id !== ev.pointerId) return;
+  const cv = ev.currentTarget;
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
+  OVL.cx = (x - OVLDRAG.dx) / cv.width;
+  OVL.cy = (y - OVLDRAG.dy) / cv.height;
+  ovlPaint();
+}
+
+function ovlUp(ev) {
+  if (!OVLDRAG) return;
+  try { ev.currentTarget.releasePointerCapture(ev.pointerId); } catch (e) {}
+  OVLDRAG = null;
+}
+
+/* ---------------------------------------------------------------- actions */
+function ovlAct(what) {
+  if (!OVL) return;
+  if (what === "bigger") { OVL.size = Math.min(2.2, OVL.size * 1.18); ovlPaint(); return; }
+  if (what === "smaller") { OVL.size = Math.max(0.5, OVL.size / 1.18); ovlPaint(); return; }
+  if (what === "fields") { ovlFields(); return; }
+  if (what === "share") { ovlShare(); return; }
+  if (what === "close") {
+    ovlRemember();
+    const id = OVL.target.id;
+    $("#ovl").classList.remove("on");
+    OVL = null;
+    targetSheet(id);
+  }
+}
+
+/* The arrangement is worth keeping: it is a decision about the photograph, and
+   redoing it every time you want to send the same target again is busywork. */
+function ovlRemember() {
+  if (!OVL) return;
+  const t = targetOf(OVL.target.id);
+  if (!t) return;
+  const want = { cx: OVL.cx, cy: OVL.cy, size: OVL.size, rows: OVL.rows,
+                 numbers: OVL.numbers, poa: OVL.poa, ring: OVL.ring };
+  if (JSON.stringify(t.overlay || {}) === JSON.stringify(want)) return;
+  t.overlay = want;
+  save();
+}
+
+function ovlFields() {
+  const on = (k) => (OVL.rows.indexOf(k) > -1 ? " checked" : "");
+  openSheet("What goes on the card", `
+    <p class="hint">Four or five lines reads well beside a photograph. More than that
+      and it stops being a caption and starts being a table.</p>
+    ${OVL_ROWS.map((r) => `<label class="f" style="flex-direction:row;align-items:center;gap:10px">
+      <input type="checkbox" name="${esc(r.k)}"${on(r.k)} style="width:auto">
+      <span style="flex:1">${esc(r.label)}</span></label>`).join("")}
+    <fieldset style="margin-top:12px"><legend>On the photograph</legend>
+      <label class="f" style="flex-direction:row;align-items:center;gap:10px">
+        <input type="checkbox" name="numbers"${OVL.numbers ? " checked" : ""} style="width:auto">
+        <span style="flex:1">Number the impacts</span></label>
+      <label class="f" style="flex-direction:row;align-items:center;gap:10px">
+        <input type="checkbox" name="poa"${OVL.poa ? " checked" : ""} style="width:auto">
+        <span style="flex:1">Show the point of aim</span></label>
+      <label class="f" style="flex-direction:row;align-items:center;gap:10px">
+        <input type="checkbox" name="ring"${OVL.ring ? " checked" : ""} style="width:auto">
+        <span style="flex:1">Ring the group</span></label>
+    </fieldset>
+    <button class="btn pri wide" data-act="tgt-ovl-fields">Done</button>`);
+}
+
+ACT["tgt-ovl-fields"] = () => {
+  const body = $("#sheetbody");
+  const ck = (k) => { const el = body.querySelector(`[name="${k}"]`); return !!(el && el.checked); };
+  OVL.rows = OVL_ROWS.map((r) => r.k).filter(ck);
+  OVL.numbers = ck("numbers");
+  OVL.poa = ck("poa");
+  OVL.ring = ck("ring");
+  closeSheet();
+  ovlPaint();
+};
+
+/* ----------------------------------------------------------------- export */
+/* Rendered at the stored photograph's own resolution, by the same function
+   that drew the screen, so nothing shifts between the two. */
+async function ovlImage() {
+  const bmp = OVL.bmp;
+  const cv = document.createElement("canvas");
+  cv.width = bmp.width; cv.height = bmp.height;
+  const g = cv.getContext("2d");
+  ovlDraw(g, { w: cv.width, h: cv.height, scale: 1, ox: 0, oy: 0 });
+  /* Drawing for export moved OVL.box into export coordinates; put the screen
+     one back so the next drag still lines up with what is on screen. */
+  const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.92));
+  ovlPaint();
+  return blob;
+}
+
+async function ovlShare() {
+  const t = OVL.target;
+  const name = `target-${t.date || today()}.jpg`;
+  let blob = null;
+  try { blob = await ovlImage(); } catch (e) { blob = null; }
+  if (!blob) { toast("Could not make the image."); return; }
+
+  ovlRemember();
+
+  /* The share sheet where there is one, which is what puts it into a message
+     without a trip through the camera roll. Saving is the fallback, and it is
+     the only route on a desktop browser. */
+  const file = (typeof File === "function") ? new File([blob], name, { type: "image/jpeg" }) : null;
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "Target" });
+      return;
+    } catch (e) {
+      /* Cancelled, or refused. Fall through to saving rather than complaining. */
+      if (e && e.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  toast("Saved.");
+}
 </script>
 <script>
 "use strict";
