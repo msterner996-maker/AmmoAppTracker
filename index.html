@@ -243,6 +243,9 @@ dl{margin:0}
 .markbar .mb-r .btn{background:transparent;border-color:#3A3F43;color:#A8A49C}
 .markflags{padding:0 12px 8px;background:rgba(16,18,20,0.92);display:flex;gap:8px;
   align-items:center;justify-content:center}
+/* An author display rule beats the user agent's [hidden]{display:none}, so a
+   flex row has to opt back out explicitly or it ignores being hidden. */
+.markflags[hidden],.markbar [hidden],.markzoom [hidden]{display:none}
 .markflags .btn{font-size:0.75rem;padding:6px 10px}
 .markflags .btn.pulled{border-color:#FF3B30;color:#FF6B62}
 .markflags .btn.cold{border-color:#4DD6FF;color:#7FE2FF}
@@ -3647,7 +3650,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-87ddf4";
+const APP_VERSION = "2026.09.14-c52b87";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4995,6 +4998,12 @@ function setAggKinds(list) { if (typeof lsSet === "function") lsSet(AGG_KINDS_KE
 /* Per-shot notes. Neither excludes the shot: a called flyer is still a shot
    that left the barrel, and a cold bore is the most honest shot of the string.
    They are marked so the picture explains itself. */
+/* The ring is drawn a touch inside the bullet's own diameter. Drawn at exactly
+   calibre it sits on the torn edge of the hole rather than around it, and the
+   stroke itself adds width on top; a few per cent in makes it close on the hole
+   and much easier to centre. */
+const MARKER_SHRINK = 0.95;
+
 const SHOT_FLAGS = {
   pulled: { label: "Pulled", colour: "#FF3B30" },
   cold: { label: "Cold bore", colour: "#4DD6FF" },
@@ -5718,7 +5727,7 @@ const markToScreen = (p) => ({
 function markReticlePx() {
   if (!TGT || !TGT.target.widthIn || !TGT.target.bulletDia) return 0;
   const pxPerIn = (TGT.bmp.width * MARKV.scale) / TGT.target.widthIn;
-  return Math.max(6, TGT.target.bulletDia * pxPerIn);
+  return Math.max(6, TGT.target.bulletDia * MARKER_SHRINK * pxPerIn);
 }
 
 function markPaint() {
@@ -6845,9 +6854,13 @@ ACT["tgt-overlay"] = async (id) => {
   });
   OVL.view = null;
   OVL.boxes = {};
+  OVL.boxesImg = {};
+  OVL.mode = "edit";
+  OVL.crop = null;
   closeSheet();
   ovlLayer().classList.add("on");
   ovlFit();
+  ovlChrome();
   ovlPaint();
 };
 
@@ -6858,8 +6871,7 @@ function ovlLayer() {
   el.className = "mark";
   el.id = "ovl";
   el.innerHTML = `
-    <div class="markhead"><b>Overlay</b>
-      <span>Drag the card where you want it. What you see is what gets shared.</span></div>
+    <div class="markhead"><b id="ovlhead">Overlay</b><span id="ovlhint"></span></div>
     <canvas id="ovlcv"></canvas>
     <div class="markzoom">
       <button data-ovl="bigger" aria-label="Bigger card">A+</button>
@@ -6867,10 +6879,13 @@ function ovlLayer() {
       <button data-ovl="reset" aria-label="Fit the photograph">\u2723</button>
     </div>
     <div class="markbar">
-      <button class="btn" data-ovl="close">Close</button>
-      <select id="ovlwhich" data-ovl-change="1"></select>
-      <button class="btn" data-ovl="fields">Fields</button>
-      <button class="btn pri" data-ovl="share">Share</button>
+      <span class="mb-l">
+        <button class="btn" data-ovl="close" id="ovlclose">Close</button>
+        <button class="btn" data-ovl="fields" id="ovlfields">Fields</button>
+        <button class="btn" data-ovl="fitcrop" id="ovlfit" hidden>Fit to groups</button>
+      </span>
+      <span class="mb-c"><select id="ovlwhich" data-ovl-change="1"></select></span>
+      <span class="mb-r"><button class="btn pri" data-ovl="share" id="ovlshare">Crop</button></span>
     </div>`;
   document.body.appendChild(el);
 
@@ -6945,7 +6960,12 @@ function ovlDraw(g, o) {
      panned or zoomed. On export the two coincide, because the drawing is made
      at the photograph's own size. */
   const unit = W / 1000;                    // one thousandth of the image width
-  const cardUnit = o.w / 1000;              // one thousandth of the surface
+  /* The card scales with the photograph, like the rings do. Holding it at a
+     constant size on screen kept it from swelling, but it then shrank against
+     the target as you zoomed, and what you arranged at one zoom was not what
+     came out. Pinned to the picture in both size and place is the only version
+     where the screen and the export agree. */
+  const cardUnit = unit;
 
   g.fillStyle = "#0B0C0D";
   g.fillRect(0, 0, o.w, o.h);
@@ -6958,7 +6978,7 @@ function ovlDraw(g, o) {
     const s = gstats(t, grp);
     if (!s) return;
     const pxPerIn = W / n(t.widthIn);
-    const r = Math.max(6 * unit, (n(t.bulletDia) || 0.224) * pxPerIn / 2);
+    const r = Math.max(6 * unit, (n(t.bulletDia) || 0.224) * MARKER_SHRINK * pxPerIn / 2);
 
     if (OVL.poa && grp.poa) {
       const p = pt(grp.poa);
@@ -7020,6 +7040,7 @@ function ovlDraw(g, o) {
 function ovlCards(g, o, unit) {
   const t = OVL.target;
   OVL.boxes = {};
+  OVL.boxesImg = {};
   ovlShown().forEach((grp) => {
     const line = ovlLines([grp], t)[0];
     if (line) ovlCard(g, o, unit, grp, line);
@@ -7059,6 +7080,7 @@ function ovlCard(g, o, unit, grp, line) {
   const x = o.ox + fx * iw;
   const y = o.oy + fy * ih;
   OVL.boxes[grp.id] = { x, y, w: boxW, h: boxH };
+  OVL.boxesImg[grp.id] = { x: fx, y: fy, w: boxW / iw, h: boxH / ih };
 
   g.fillStyle = "rgba(24,27,32,0.80)";
   g.strokeStyle = "rgba(255,255,255,0.22)";
@@ -7180,6 +7202,7 @@ function ovlPaint() {
   g.setTransform(1, 0, 0, 1, 0, 0);
   ovlDraw(g, { w: cv.width, h: cv.height, scale: OVL.view.scale,
     ox: OVL.view.ox, oy: OVL.view.oy });
+  if (OVL.mode === "crop" && OVL.crop) ovlCropOverlay(g, { w: cv.width, h: cv.height });
 }
 
 /* --------------------------------------------------------------- dragging */
@@ -7209,6 +7232,17 @@ function ovlDown(ev) {
   const cv = ev.currentTarget;
   const p = ovlXY(cv, ev);
   OVLP.push({ id: ev.pointerId, x: p.x, y: p.y });
+  if (OVLP.length === 1 && OVL.mode === "crop") {
+    const h = cropHandle(p.x, p.y);
+    if (h) {
+      cv.setPointerCapture(ev.pointerId);
+      const v = OVL.view;
+      OVLDRAG = { id: ev.pointerId, crop: h, start: Object.assign({}, OVL.crop, {
+        gx: (p.x - v.ox) / (OVL.bmp.width * v.scale),
+        gy: (p.y - v.oy) / (OVL.bmp.height * v.scale) }) };
+      return;
+    }
+  }
   if (OVLP.length === 2) {
     /* A second finger always means the photograph, never a card. Drop any
        card drag in progress so a pinch cannot drag one along with it. */
@@ -7216,6 +7250,7 @@ function ovlDown(ev) {
     OVLPINCH = ovlPinch();
     return;
   }
+  if (OVL.mode === "crop") return;
   const id = ovlHit(p.x, p.y);
   if (id) {
     cv.setPointerCapture(ev.pointerId);
@@ -7257,6 +7292,12 @@ function ovlMove(ev) {
     return;
   }
 
+  if (OVLDRAG && OVLDRAG.id === ev.pointerId && OVLDRAG.crop) {
+    cropDrag(OVLDRAG.crop, p.x, p.y, OVLDRAG.start);
+    ovlPaint();
+    return;
+  }
+
   if (OVLDRAG && OVLDRAG.id === ev.pointerId) {
     /* Back out of screen coordinates into the photograph's, so the card stays
        where it was put no matter what the view does afterwards. */
@@ -7295,6 +7336,113 @@ ACT["tgt-ovl-reset"] = () => {
   ovlFit(); ovlPaint();
 };
 
+/* ----------------------------------------------------------------- crop */
+/* Everything worth keeping, as a fraction of the photograph: the cards, the
+   holes and the aim points of whichever groups are showing. A target
+   photographed at arm's length is mostly paper, and a picture that is mostly
+   paper says less than one that is mostly group. */
+function ovlDefaultCrop() {
+  const t = OVL.target;
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0, any = false;
+  const take = (x, y) => {
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    any = true;
+  };
+  ovlShown().forEach((grp) => {
+    (grp.impacts || []).forEach((m) => take(m[0], m[1]));
+    if (grp.poa) take(grp.poa[0], grp.poa[1]);
+    const b = OVL.boxesImg[grp.id];
+    if (b) { take(b.x, b.y); take(b.x + b.w, b.y + b.h); }
+  });
+  if (!any) return { x: 0, y: 0, w: 1, h: 1 };
+  /* A little air, and a bit more of it below, where a ring around the lowest
+     hole otherwise touches the edge. */
+  const padX = 0.03, padY = 0.03;
+  x0 = Math.max(0, x0 - padX); y0 = Math.max(0, y0 - padY);
+  x1 = Math.min(1, x1 + padX); y1 = Math.min(1, y1 + padY);
+  void t;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/* The crop rectangle on screen, and its corner handles. */
+function cropRect() {
+  const v = OVL.view, c = OVL.crop;
+  const iw = OVL.bmp.width * v.scale, ih = OVL.bmp.height * v.scale;
+  return { x: v.ox + c.x * iw, y: v.oy + c.y * ih, w: c.w * iw, h: c.h * ih };
+}
+
+function ovlCropOverlay(g, o) {
+  const r = cropRect();
+  const dpr = window.devicePixelRatio || 1;
+  /* Dim what will be thrown away rather than hiding it, so you can still see
+     what you are cutting off. */
+  g.fillStyle = "rgba(8,9,10,0.66)";
+  g.fillRect(0, 0, o.w, r.y);
+  g.fillRect(0, r.y + r.h, o.w, o.h - (r.y + r.h));
+  g.fillRect(0, r.y, r.x, r.h);
+  g.fillRect(r.x + r.w, r.y, o.w - (r.x + r.w), r.h);
+
+  g.strokeStyle = "#E9B44C"; g.lineWidth = 1.5 * dpr;
+  g.strokeRect(r.x, r.y, r.w, r.h);
+
+  /* Thirds, which is what anyone composing a picture reaches for. */
+  g.strokeStyle = "rgba(233,180,76,0.28)"; g.lineWidth = 1 * dpr;
+  g.beginPath();
+  for (let i = 1; i < 3; i++) {
+    g.moveTo(r.x + (r.w * i) / 3, r.y); g.lineTo(r.x + (r.w * i) / 3, r.y + r.h);
+    g.moveTo(r.x, r.y + (r.h * i) / 3); g.lineTo(r.x + r.w, r.y + (r.h * i) / 3);
+  }
+  g.stroke();
+
+  const k = 18 * dpr;
+  g.strokeStyle = "#E9B44C"; g.lineWidth = 3.5 * dpr;
+  [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1],
+   [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]].forEach(([cx, cy, sx, sy]) => {
+    g.beginPath();
+    g.moveTo(cx + sx * k, cy); g.lineTo(cx, cy); g.lineTo(cx, cy + sy * k);
+    g.stroke();
+  });
+}
+
+const CROP_MIN = 0.06;
+
+function cropHandle(x, y) {
+  const r = cropRect();
+  const dpr = window.devicePixelRatio || 1;
+  const grab = 34 * dpr;
+  const corners = { nw: [r.x, r.y], ne: [r.x + r.w, r.y],
+                    sw: [r.x, r.y + r.h], se: [r.x + r.w, r.y + r.h] };
+  let best = null, bestD = grab;
+  Object.keys(corners).forEach((k) => {
+    const d = Math.hypot(corners[k][0] - x, corners[k][1] - y);
+    if (d < bestD) { bestD = d; best = k; }
+  });
+  if (best) return best;
+  if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return "move";
+  return null;
+}
+
+function cropDrag(corner, x, y, start) {
+  const v = OVL.view;
+  const iw = OVL.bmp.width * v.scale, ih = OVL.bmp.height * v.scale;
+  const fx = (x - v.ox) / iw, fy = (y - v.oy) / ih;
+  const c = Object.assign({}, start);
+
+  if (corner === "move") {
+    c.x = Math.max(0, Math.min(1 - c.w, start.x + fx - start.gx));
+    c.y = Math.max(0, Math.min(1 - c.h, start.y + fy - start.gy));
+    OVL.crop = { x: c.x, y: c.y, w: c.w, h: c.h };
+    return;
+  }
+  let x0 = start.x, y0 = start.y, x1 = start.x + start.w, y1 = start.y + start.h;
+  if (corner.indexOf("w") > -1) x0 = Math.max(0, Math.min(x1 - CROP_MIN, fx));
+  if (corner.indexOf("e") > -1) x1 = Math.min(1, Math.max(x0 + CROP_MIN, fx));
+  if (corner.indexOf("n") > -1) y0 = Math.max(0, Math.min(y1 - CROP_MIN, fy));
+  if (corner.indexOf("s") > -1) y1 = Math.min(1, Math.max(y0 + CROP_MIN, fy));
+  OVL.crop = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 /* ---------------------------------------------------------------- actions */
 function ovlAct(what) {
   if (!OVL) return;
@@ -7302,14 +7450,46 @@ function ovlAct(what) {
   if (what === "smaller") { OVL.size = Math.max(0.5, OVL.size / 1.18); ovlPaint(); return; }
   if (what === "reset") { ACT["tgt-ovl-reset"](); return; }
   if (what === "fields") { ovlFields(); return; }
-  if (what === "share") { ovlShare(); return; }
+  if (what === "fitcrop") { OVL.crop = ovlDefaultCrop(); ovlPaint(); return; }
+
+  /* Share is two steps. Arranging and framing are different jobs and doing
+     them on one screen means every drag is ambiguous; and a target photographed
+     at arm's length is mostly paper, so going straight to the share sheet sends
+     a picture that is nine parts blank cardboard. */
+  if (what === "share") {
+    if (OVL.mode !== "crop") {
+      OVL.mode = "crop";
+      OVL.crop = OVL.crop || ovlDefaultCrop();
+      ovlChrome();
+      ovlPaint();
+      return;
+    }
+    ovlShare();
+    return;
+  }
   if (what === "close") {
+    if (OVL.mode === "crop") { OVL.mode = "edit"; ovlChrome(); ovlPaint(); return; }
     ovlRemember();
     const id = OVL.target.id;
     $("#ovl").classList.remove("on");
     OVL = null;
     targetSheet(id);
   }
+}
+
+function ovlChrome() {
+  const el = $("#ovl");
+  if (!el || !OVL) return;
+  const crop = OVL.mode === "crop";
+  el.querySelector("#ovlhead").textContent = crop ? "Frame it" : "Overlay";
+  el.querySelector("#ovlhint").textContent = crop
+    ? "Drag the corners to keep only what is worth sending. Pinch to zoom while you judge it."
+    : "Drag a card where you want it. What you see is what gets shared.";
+  el.querySelector("#ovlclose").textContent = crop ? "Back" : "Close";
+  el.querySelector("#ovlshare").textContent = crop ? "Share" : "Crop";
+  el.querySelector("#ovlfields").hidden = crop;
+  el.querySelector("#ovlfit").hidden = !crop;
+  el.querySelector("#ovlwhich").hidden = crop;
 }
 
 /* The arrangement is worth keeping: it is a decision about the photograph, and
@@ -7319,7 +7499,7 @@ function ovlRemember() {
   const t = targetOf(OVL.target.id);
   if (!t) return;
   const want = { cards: OVL.cards, size: OVL.size, rows: OVL.rows,
-                 numbers: OVL.numbers, poa: OVL.poa, ring: OVL.ring };
+                 numbers: OVL.numbers, poa: OVL.poa, ring: OVL.ring, crop: OVL.crop };
   if (JSON.stringify(t.overlay || {}) === JSON.stringify(want)) return;
   t.overlay = want;
   save();
@@ -7363,12 +7543,16 @@ ACT["tgt-ovl-fields"] = () => {
    that drew the screen, so nothing shifts between the two. */
 async function ovlImage() {
   const bmp = OVL.bmp;
+  /* The crop if one was framed, otherwise the whole photograph. Screen zoom is
+     for looking, never for cropping: what gets cut is what the rectangle says
+     and nothing else. */
+  const c = OVL.crop || { x: 0, y: 0, w: 1, h: 1 };
   const cv = document.createElement("canvas");
-  cv.width = bmp.width; cv.height = bmp.height;
+  cv.width = Math.max(16, Math.round(bmp.width * c.w));
+  cv.height = Math.max(16, Math.round(bmp.height * c.h));
   const g = cv.getContext("2d");
-  /* Always the whole photograph, whatever the screen happens to be zoomed to:
-     zoom is for placing cards accurately, not for cropping. */
-  ovlDraw(g, { w: cv.width, h: cv.height, scale: 1, ox: 0, oy: 0 });
+  ovlDraw(g, { w: cv.width, h: cv.height, scale: 1,
+    ox: -c.x * bmp.width, oy: -c.y * bmp.height });
   /* Drawing for export moved OVL.box into export coordinates; put the screen
      one back so the next drag still lines up with what is on screen. */
   const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.92));
