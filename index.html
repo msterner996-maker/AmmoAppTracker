@@ -3629,7 +3629,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.13-4b7ebb";
+const APP_VERSION = "2026.09.14-d34f22";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4549,20 +4549,62 @@ function refIn(len, unit) {
   return v;
 }
 
-/* True minute of angle: 1 MOA subtends 1.047 inches at 100 yards, not 1.000.
-   The approximation is under half a per cent and nobody would see it on a
-   target, but it compounds in the zero adjustment, so it is done properly. */
+/* True minute of angle subtends 1.0472 inches at 100 yards. Plenty of apps
+   use the round 1.000 inch instead — "shooter's MOA" — and the two differ by
+   4.7 per cent, which is easily enough to make two apps disagree about the
+   same group. Which one is in use is a setting rather than an assumption, so
+   a figure can be compared against whatever else you are reading. */
 const MOA_RAD = Math.PI / (180 * 60);
+const SMOA_RAD = 1 / 3600;
+
+const UNIT_KEY = "armory.units";
+const UNIT_DEF = { size: "moa", zero: "moa", moa: "true" };
+function units() {
+  const u = (typeof lsGet === "function" && lsGet(UNIT_KEY)) || {};
+  return Object.assign({}, UNIT_DEF, u);
+}
+function setUnits(patch) {
+  if (typeof lsSet === "function") lsSet(UNIT_KEY, Object.assign(units(), patch));
+}
+const moaRad = () => (units().moa === "shooter" ? SMOA_RAD : MOA_RAD);
 
 function toMoa(inches, t) {
   const d = distIn(t);
-  return d ? (n(inches) / d) / MOA_RAD : null;
+  return d ? (n(inches) / d) / moaRad() : null;
 }
 function toMil(inches, t) {
   const d = distIn(t);
   return d ? (n(inches) / d) * 1000 : null;
 }
-function fromMoa(moa, t) { return n(moa) * MOA_RAD * distIn(t); }
+function fromMoa(moa, t) { return n(moa) * moaRad() * distIn(t); }
+
+/* A length on the target, in whichever unit the setting asks for. `kind` is
+   "size" for spreads or "zero" for corrections, which are often wanted in
+   different units: minutes for a group, clicks or mils for a turret. */
+function showLen(inches, t, kind) {
+  if (inches == null || !isFinite(inches)) return "\u2014";
+  const u = units();
+  const mode = (kind === "zero" ? u.zero : u.size);
+  if (mode === "in") return n(inches).toFixed(3) + "\u2033";
+  if (mode === "cm") return (n(inches) * 2.54).toFixed(2) + " cm";
+  if (mode === "mm") return (n(inches) * 25.4).toFixed(1) + " mm";
+  if (mode === "mil") {
+    const v = toMil(inches, t);
+    return v == null ? "\u2014" : v.toFixed(2) + " mil";
+  }
+  const v = toMoa(inches, t);
+  return v == null ? "\u2014" : v.toFixed(2) + " MOA";
+}
+/* The same length in the other unit, for the small print beside it. */
+function showAlt(inches, t, kind) {
+  if (inches == null || !isFinite(inches)) return "";
+  const mode = (kind === "zero" ? units().zero : units().size);
+  if (mode === "in" || mode === "cm" || mode === "mm") {
+    const v = toMoa(inches, t);
+    return v == null ? "" : v.toFixed(2) + " MOA";
+  }
+  return n(inches).toFixed(3) + "\u2033";
+}
 
 /* Bullet diameters for the calibres actually in the log. The cursor is drawn
    at the size of the hole, so the number wanted is the bullet, not the name:
@@ -4574,6 +4616,42 @@ const BULLET_DIA = {
   "9mm": 0.355, ".45acp": 0.452, ".380": 0.355, ".38": 0.357, ".357": 0.357,
   "6.5cm": 0.264, "6.5creedmoor": 0.264, ".338": 0.338, ".300blk": 0.308,
 };
+/* What a rifle will chamber. Exact calibre first; these are the cases where a
+   different name is the same chamber, or a safe subset of it.
+
+   The 5.56 entry goes one way only and deliberately so: a 5.56 chamber will
+   take .223, but a .223 chamber fed 5.56 sees pressures it was not built for.
+   The list narrows a picker, it does not authorise anything — the full list is
+   always one tap away. */
+const CHAMBERS = {
+  "5.56": ["5.56", ".223", "5.56/.223"],
+  ".223": [".223"],
+  ".308": [".308", "7.62x51", "308"],
+  "7.62x51": ["7.62x51", ".308"],
+  "30-30": ["30-30", ".30-30"],
+  "7.62x39": ["7.62x39"],
+  "7.62x54r": ["7.62x54r"],
+  ".22lr": [".22lr"],
+  "9mm": ["9mm", "9x19"],
+};
+const calKey = (c) => String(c || "").toLowerCase().replace(/\s+/g, "");
+
+/* The ammunition a given firearm can use. Falls back to everything when the
+   calibre is unrecognised or nothing matches, because an empty picker is worse
+   than an unfiltered one. */
+function ammoForGun(f) {
+  if (!f) return S.ammo || [];
+  const k = calKey(f.caliber);
+  const ok = CHAMBERS[k] || [k];
+  const fit = (S.ammo || []).filter((a) => ok.indexOf(calKey(a.caliber)) > -1);
+  return fit.length ? fit : (S.ammo || []);
+}
+function ammoFitsGun(f, a) {
+  if (!f || !a) return true;
+  const ok = CHAMBERS[calKey(f.caliber)] || [calKey(f.caliber)];
+  return ok.indexOf(calKey(a.caliber)) > -1;
+}
+
 function bulletDiaFor(caliber) {
   const k = String(caliber || "").toLowerCase().replace(/\s+/g, "");
   return BULLET_DIA[k] || null;
@@ -4594,29 +4672,46 @@ function bulletDiaFor(caliber) {
    drag and removes the term. */
 function calibrate(o) {
   const inH = refIn(o.refLen, o.refUnit);
-  const inV = refIn(o.refLenV == null ? o.refLen : o.refLenV, o.refUnit);
-  const spanH = Math.abs(n(o.spanH));                 // fraction of image width
-  const spanV = o.spanV == null ? null : Math.abs(n(o.spanV));   // of image height
-  if (!(inH > 0) || !(spanH > 0) || !(o.imgW > 0) || !(o.imgH > 0)) return null;
+  const inV = refIn(o.refLenV == null ? o.refLen : o.refLenV, o.refUnitV || o.refUnit);
+  /* segPx is the true length of the marked segment in image pixels, not the
+     length of one of its components. A target photographed with the grid
+     canted in the frame has both marks running diagonally, and taking only
+     the horizontal or vertical part of them understates the reference by
+     cos(angle) — 1.5 per cent at ten degrees, and it grows fast. Rotation in
+     the plane of the photograph changes no distance at all, so the length of
+     the segment is the right thing to measure and is immune to it. */
+  const segH = Math.abs(n(o.segPxH));
+  const segV = o.segPxV == null ? null : Math.abs(n(o.segPxV));
+  if (!(inH > 0) || !(segH > 0) || !(o.imgW > 0) || !(o.imgH > 0)) return null;
 
-  const widthIn = inH / spanH;
-  /* With only the horizontal marked, assume square pixels and a square-on
-     photograph: the vertical scale is the horizontal one, so the frame's
-     height in inches follows from its aspect ratio. */
-  const heightIn = (spanV > 0 && inV > 0)
-    ? inV / spanV
-    : widthIn * (n(o.imgH) / n(o.imgW));
+  const pxPerInH = segH / inH;
+  const widthIn = n(o.imgW) / pxPerInH;
+  /* With only one axis marked, square pixels and a square-on photograph are
+     assumed, so the vertical scale is the horizontal one. Marking the second
+     axis replaces that assumption with a measurement, which matters only when
+     the photograph was taken off-square; a canted but flat-on photograph
+     should now give the same answer either way. */
+  const pxPerInV = (segV > 0 && inV > 0) ? segV / inV : pxPerInH;
+  const heightIn = n(o.imgH) / pxPerInV;
 
   return {
     widthIn, heightIn,
+    pxPerInH, pxPerInV,
     refLen: n(o.refLen), refLenV: o.refLenV == null ? null : n(o.refLenV),
-    refUnit: o.refUnit || "in",
-    spanH, spanV: spanV || null,
+    refUnit: o.refUnit || "in", refUnitV: o.refUnitV || o.refUnit || "in",
+    segPxH: segH, segPxV: segV || null,
     imgW: n(o.imgW), imgH: n(o.imgH),
-    /* Kept for the interface: pixels per inch depends on which copy of the
-       photograph is on screen, so it is derived, never stored as truth. */
-    squared: !!(spanV > 0),
+    squared: !!(segV > 0),
+    /* How far apart the two axes came out. On a flat target this should be a
+       fraction of a per cent; a large figure means the photograph was taken
+       well off-square, or the two references were not the same length. */
+    axisSkew: (segV > 0 && inV > 0) ? (pxPerInV / pxPerInH - 1) : null,
   };
+}
+
+/* The true pixel length of a segment given as two normalised marks. */
+function segPx(a, b, imgW, imgH) {
+  return Math.hypot((a[0] - b[0]) * n(imgW), (a[1] - b[1]) * n(imgH));
 }
 
 /* A normalised mark as inches on the target, origin at the top left. */
@@ -4959,6 +5054,7 @@ RENDER.targets = () => {
 
   let h = `<div class="btnrow" style="margin-bottom:14px">
     <button class="btn pri wide" data-act="tgt-new">Measure a target</button></div>`;
+  h += unitPanel();
 
   if (!groups.length) {
     return h + `<div class="empty"><b>Nothing measured yet</b>
@@ -4982,8 +5078,7 @@ RENDER.targets = () => {
       name: f ? f.name : "Firearm removed",
       sub: f ? f.caliber : "",
       count: mine.length,
-      tag: agg && agg.mrMoa != null
-        ? `<span class="tag moss">${agg.mrMoa.toFixed(2)}' MR</span>` : "",
+      tag: agg ? `<span class="tag moss">${esc(showLen(agg.mr, aggRef(fid, null), "size"))} MR</span>` : "",
       body: () => rifleTargets(fid),
     };
   });
@@ -5012,7 +5107,7 @@ function rifleTargets(fid) {
         <span class="meta">${plural(gs.length, "group")} &middot;
           ${plural(agg ? agg.shots : 0, "shot")}</span></span>
       </span>`;
-    if (agg) h += aggLine(agg);
+    if (agg) h += aggLine(agg, aggRef(fid, aid));
     h += `</div>`;
   });
   h += `</div>`;
@@ -5034,25 +5129,74 @@ function rifleTargets(fid) {
       <span class="grow"><span class="ttl">${esc(dshow(t.date))}${
         t.notes ? " &middot; " + esc(String(t.notes).slice(0, 40)) : ""}</span>
       <span class="meta">${fmt(t.distance)}${esc(t.distanceUnit || "yd")} &middot;
-        ${plural(gs.length, "group")}${first && first.esMoa != null
-          ? " &middot; " + first.esMoa.toFixed(2) + "' group" : ""}</span></span>
+        ${plural(gs.length, "group")}${first
+          ? " &middot; " + esc(showLen(first.es, t, "size")) + " group" : ""}</span></span>
       <span class="chev">&rsaquo;</span></div>`;
   });
   return h + `</div>`;
 }
 
+/* How the numbers are shown. A display preference, so it lives beside the
+   theme in local storage rather than in the log: it is about this device, not
+   about the inventory, and it should not push a revision to OneDrive.
+
+   The minute-of-angle convention is here because it is the most common reason
+   two apps disagree about the same group. True MOA is 1.0472 inches at a
+   hundred yards; plenty of software uses a round inch instead and calls it
+   MOA. The gap is 4.7 per cent and it is entirely a matter of definition. */
+function unitPanel() {
+  const u = units();
+  const opt = (v, cur, label) =>
+    `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
+  const lens = (cur) => opt("moa", cur, "MOA") + opt("mil", cur, "Mils")
+    + opt("in", cur, "Inches") + opt("cm", cur, "Centimetres") + opt("mm", cur, "Millimetres");
+  return `<details class="card" style="margin-bottom:14px">
+    <summary style="cursor:pointer;font-weight:550;font-size:0.9375rem">Units</summary>
+    <div class="f2" style="margin-top:10px">
+      <label class="f"><span>Group and spread</span>
+        <select data-act-change="tgt-units" data-unit="size" id="u-size">${lens(u.size)}</select></label>
+      <label class="f"><span>Zero correction</span>
+        <select data-act-change="tgt-units" data-unit="zero" id="u-zero">${lens(u.zero)}</select></label>
+    </div>
+    <label class="f"><span>Minute of angle</span>
+      <select data-act-change="tgt-units" data-unit="moa" id="u-moa">
+        ${opt("true", u.moa, "True MOA (1.047\u2033 at 100 yd)")}
+        ${opt("shooter", u.moa, "Shooter\u2019s MOA (1.000\u2033 at 100 yd)")}
+      </select></label>
+    <p class="hint" style="margin:0">Most apps that disagree with this one about a group
+      size are using the other convention. They differ by 4.7 per cent, which is the
+      whole of the difference and none of it is measurement.</p>
+  </details>`;
+}
+
+ACT["tgt-units"] = () => {
+  setUnits({
+    size: ($("#u-size") || {}).value || "moa",
+    zero: ($("#u-zero") || {}).value || "moa",
+    moa: ($("#u-moa") || {}).value || "true",
+  });
+  render();
+  if (SHEET_OPEN && TGT_SHEET) targetSheet(TGT_SHEET);
+};
+
+/* Angular units need a distance, and a pooled figure can span several. The
+   most recent target for that rifle and load is the sensible reference, and
+   where the distances differ the figures fall back to inches anyway. */
+function aggRef(fid, aid) {
+  const gs = groupsOf(fid, aid);
+  const last = gs.length ? gs[gs.length - 1] : null;
+  return last ? targetOf(last.targetId) : null;
+}
+
 /* The pooled estimate, with its interval. The interval is not decoration:
    without it two loads that differ by nothing look different. */
-function aggLine(agg) {
-  const mr = agg.mrMoa != null ? agg.mrMoa.toFixed(2) + "'" : agg.mr.toFixed(3) + '"';
-  const ci = agg.ciMoa
-    ? `${agg.ciMoa.lo.toFixed(2)} to ${agg.ciMoa.hi.toFixed(2)}`
+function aggLine(agg, t) {
+  const ci = agg.ci
+    ? `${showLen(MR_K * agg.ci.lo, t, "size")} to ${showLen(MR_K * agg.ci.hi, t, "size")}`
     : null;
   return `<span class="meta" style="font-family:var(--mono)">
-    Mean radius ${esc(mr)}${ci ? ` &middot; 90% ${esc(ci)}` : ""}
-    &middot; expected ${fmt(5)}-shot group ${esc(
-      agg.distIn ? ((agg.expectedEs(5) / agg.distIn) / MOA_RAD).toFixed(2) + "'"
-                 : agg.expectedEs(5).toFixed(2) + '"')}</span>`;
+    Mean radius ${esc(showLen(agg.mr, t, "size"))}${ci ? ` &middot; 90% ${esc(ci)}` : ""}
+    &middot; expected 5-shot group ${esc(showLen(agg.expectedEs(5), t, "size"))}</span>`;
 }
 
 /* ------------------------------------------------------------- capturing */
@@ -5144,15 +5288,15 @@ function markLayer() {
     <div class="markhead"><b id="markhead"></b><span id="markhint"></span></div>
     <canvas id="markcv"></canvas>
     <div class="markzoom">
-      <button data-act="tgt-zoom" data-id="in" aria-label="Zoom in">+</button>
-      <button data-act="tgt-zoom" data-id="out" aria-label="Zoom out">&minus;</button>
+      <button data-id="in" aria-label="Zoom in">+</button>
+      <button data-id="out" aria-label="Zoom out">&minus;</button>
     </div>
     <div class="markbar">
-      <button class="btn" data-act="tgt-cancel">Cancel</button>
-      <button class="btn" data-act="tgt-undo" id="markundo">Undo</button>
+      <button class="btn" data-mact="tgt-back" id="markback">Back</button>
+      <button class="btn" data-mact="tgt-undo" id="markundo">Undo</button>
       <span class="grow" id="markcount"></span>
-      <button class="btn" data-act="tgt-skip" id="markskip">Skip</button>
-      <button class="btn pri" data-act="tgt-confirm">Confirm</button>
+      <button class="btn" data-mact="tgt-skip" id="markskip">Skip</button>
+      <button class="btn pri" data-mact="tgt-confirm">Confirm</button>
     </div>`;
   document.body.appendChild(el);
   const cv = el.querySelector("#markcv");
@@ -5160,11 +5304,42 @@ function markLayer() {
   cv.addEventListener("pointermove", markMove);
   cv.addEventListener("pointerup", markUp);
   cv.addEventListener("pointercancel", markUp);
+
+  /* These buttons fire on pointerdown rather than click, and that is the
+     whole point of the layer.
+
+     A browser only synthesises a click for a simple single-finger tap. With
+     one finger already down on the photograph, a second finger landing on a
+     button produces pointer events but usually no click at all, so the button
+     appeared dead exactly when it was needed. Lifting first is not a
+     workaround either: letting go is itself a small drag, and the reticle
+     moves off the point you spent ten seconds placing.
+
+     Handling pointerdown means the press registers with the other finger
+     still holding position, which is how this is meant to be used. */
+  el.querySelectorAll("[data-mact]").forEach((b) => {
+    b.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const fn = ACT[b.dataset.mact];
+      if (fn) fn(b.dataset.id || null);
+    });
+  });
+  el.querySelectorAll(".markzoom button").forEach((b) => {
+    b.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      ACT["tgt-zoom"](b.dataset.id);
+    });
+  });
   return el;
 }
 
-function targetStep(step) {
+function targetStep(step, back) {
   if (!TGT) return;
+  if (!back) {
+    TGT.trail = TGT.trail || [];
+    if (TGT.step && TGT.step !== step) TGT.trail.push(TGT.step);
+  }
   TGT.step = step;
   const el = markLayer();
   el.classList.add("on");
@@ -5237,8 +5412,12 @@ function markPaint() {
   (TGT.marks || []).forEach((m) => {
     const p = markToScreen(m);
     g.strokeStyle = "#E9B44C"; g.lineWidth = 2 * dpr;
-    g.beginPath(); g.moveTo(p.x - 9 * dpr, p.y); g.lineTo(p.x + 9 * dpr, p.y);
-    g.moveTo(p.x, p.y - 9 * dpr); g.lineTo(p.x, p.y + 9 * dpr); g.stroke();
+    g.beginPath(); g.moveTo(p.x - 9 * dpr, p.y); g.lineTo(p.x - 2.5 * dpr, p.y);
+    g.moveTo(p.x + 2.5 * dpr, p.y); g.lineTo(p.x + 9 * dpr, p.y);
+    g.moveTo(p.x, p.y - 9 * dpr); g.lineTo(p.x, p.y - 2.5 * dpr);
+    g.moveTo(p.x, p.y + 2.5 * dpr); g.lineTo(p.x, p.y + 9 * dpr); g.stroke();
+    g.fillStyle = "#E9B44C";
+    g.beginPath(); g.arc(p.x, p.y, 1.25 * dpr, 0, 7); g.fill();
   });
   if ((TGT.marks || []).length === 2) {
     const a = markToScreen(TGT.marks[0]), b = markToScreen(TGT.marks[1]);
@@ -5252,8 +5431,12 @@ function markPaint() {
       const p = markToScreen(cur.poa);
       g.strokeStyle = "#7FB069"; g.lineWidth = 2 * dpr;
       g.beginPath(); g.arc(p.x, p.y, 11 * dpr, 0, 7); g.stroke();
-      g.beginPath(); g.moveTo(p.x - 16 * dpr, p.y); g.lineTo(p.x + 16 * dpr, p.y);
-      g.moveTo(p.x, p.y - 16 * dpr); g.lineTo(p.x, p.y + 16 * dpr); g.stroke();
+      g.beginPath(); g.moveTo(p.x - 16 * dpr, p.y); g.lineTo(p.x - 3 * dpr, p.y);
+      g.moveTo(p.x + 3 * dpr, p.y); g.lineTo(p.x + 16 * dpr, p.y);
+      g.moveTo(p.x, p.y - 16 * dpr); g.lineTo(p.x, p.y - 3 * dpr);
+      g.moveTo(p.x, p.y + 3 * dpr); g.lineTo(p.x, p.y + 16 * dpr); g.stroke();
+      g.fillStyle = "#7FB069";
+      g.beginPath(); g.arc(p.x, p.y, 1.25 * dpr, 0, 7); g.fill();
     }
     const r = markReticlePx() / 2 || 7 * dpr;
     (cur.impacts || []).forEach((m, i) => {
@@ -5277,6 +5460,11 @@ function markPaint() {
   g.moveTo(cx, cy - 26 * dpr); g.lineTo(cx, cy - (rr > 3 ? rr + 3 * dpr : 3 * dpr));
   g.moveTo(cx, cy + (rr > 3 ? rr + 3 * dpr : 3 * dpr)); g.lineTo(cx, cy + 26 * dpr);
   g.stroke();
+  /* The exact centre. The arms stop short of it on purpose: a crosshair whose
+     lines meet hides the very point you are trying to place, and on a gridline
+     or a hole edge that last half-millimetre is the whole job. */
+  g.fillStyle = "#FF4D4D";
+  g.beginPath(); g.arc(cx, cy, 1.25 * dpr, 0, 7); g.fill();
 
   markChrome();
 }
@@ -5289,6 +5477,9 @@ function markChrome() {
   const count = el.querySelector("#markcount");
   const skip = el.querySelector("#markskip");
   const undo = el.querySelector("#markundo");
+
+  const back = el.querySelector("#markback");
+  if (back) back.textContent = (step === "calH" && !(TGT.marks || []).length) ? "Cancel" : "Back";
 
   if (step === "calH" || step === "calV") {
     count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
@@ -5330,8 +5521,11 @@ function markMove(ev) {
   if (!p) return;
   const dpr = window.devicePixelRatio || 1;
   if (MARKP.length === 1) {
-    MARKV.ox += (ev.clientX - p.x) * dpr;
-    MARKV.oy += (ev.clientY - p.y) * dpr;
+    if (!p.stale) {
+      MARKV.ox += (ev.clientX - p.x) * dpr;
+      MARKV.oy += (ev.clientY - p.y) * dpr;
+    }
+    p.stale = false;
     p.x = ev.clientX; p.y = ev.clientY;
   } else if (MARKP.length === 2 && MARKPINCH) {
     p.x = ev.clientX; p.y = ev.clientY;
@@ -5351,9 +5545,16 @@ function markMove(ev) {
 }
 
 function markUp(ev) {
+  const cv = ev.currentTarget;
+  try { cv.releasePointerCapture(ev.pointerId); } catch (e) {}
   MARKP = MARKP.filter((q) => q.id !== ev.pointerId);
-  if (MARKP.length < 2) MARKPINCH = null;
-  if (MARKP.length === 2) MARKPINCH = pinchState();
+  /* Coming out of a pinch, whichever finger is still down becomes the pan
+     finger. Its recorded position is from the pinch, so without reseeding it
+     the next move is computed against a stale point and the photograph jumps.
+     There is nothing to reseed from here, so the remaining pointer is left to
+     re-register its position on its next move instead. */
+  MARKP.forEach((q) => { q.stale = true; });
+  MARKPINCH = MARKP.length === 2 ? pinchState() : null;
 }
 
 ACT["tgt-zoom"] = (dir) => {
@@ -5382,12 +5583,46 @@ ACT["tgt-confirm"] = () => {
     return;
   }
   if (step === "poa") {
-    TGT.current = { id: uid("gp"), targetId: TGT.target.id, poa: p, impacts: [], excluded: [] };
+    TGT.current = { id: uid("gp"), targetId: TGT.target.id, poa: p,
+      impacts: TGT.holdImpacts || [], excluded: [] };
+    TGT.holdImpacts = null;
     targetStep("impacts");
     return;
   }
   TGT.current.impacts.push(p);
   markPaint();
+};
+
+/* Back steps out of the current stage rather than out of the whole target.
+   Cancel is still there, on the step where there is nothing yet to go back to. */
+ACT["tgt-back"] = () => {
+  if (!TGT) return;
+  const step = TGT.step;
+
+  /* Part-way through a pair of calibration marks: drop them and start the
+     pair again rather than leaving the stage. */
+  if ((step === "calH" || step === "calV") && (TGT.marks || []).length) {
+    TGT.marks = [];
+    markPaint();
+    return;
+  }
+  if (step === "calH") { ACT["tgt-cancel"](); return; }
+  if (step === "calV") {
+    TGT.cal.spanless = true;
+    TGT.marks = [];
+    calSheet("h", true);
+    return;
+  }
+  if (step === "poa") { setupSheet(); return; }
+  if (step === "impacts") {
+    /* Going back from impacts means remarking the aim point, and the impacts
+       are still good: they are stored against the photograph, not the aim
+       point, so they survive. */
+    TGT.holdImpacts = (TGT.current && TGT.current.impacts) || [];
+    TGT.current = null;
+    targetStep("poa", true);
+    return;
+  }
 };
 
 ACT["tgt-undo"] = () => {
@@ -5414,36 +5649,46 @@ ACT["tgt-skip"] = () => {
    which span it fills. */
 function calDone(step) {
   const [a, b] = TGT.marks;
-  const span = step === "calH" ? Math.abs(a[0] - b[0]) : Math.abs(a[1] - b[1]);
-  if (!(span > 0.002)) {
-    toast("Those two marks are almost on top of each other. Zoom in and try again.");
+  /* The length of the segment, not the length of one of its sides. A target
+     photographed with its grid canted in the frame has both references running
+     diagonally, and the component would understate them. */
+  const px = segPx(a, b, TGT.target.imgW, TGT.target.imgH);
+  const shortest = Math.min(TGT.target.imgW, TGT.target.imgH) * 0.01;
+  if (!(px > shortest)) {
+    toast("Those two marks are too close together to calibrate from. Zoom in and use a longer reference.");
     TGT.marks = [];
     markPaint();
     return;
   }
-  if (step === "calH") { TGT.cal.spanH = span; TGT.marks = []; calSheet("h"); }
-  else { TGT.cal.spanV = span; TGT.marks = []; calApply(); }
+  if (step === "calH") { TGT.cal.segPxH = px; TGT.marks = []; calSheet("h"); }
+  else { TGT.cal.segPxV = px; TGT.marks = []; calSheet("v"); }
 }
 
 function calSkip() {
   TGT.marks = [];
-  TGT.cal.spanV = null;
+  TGT.cal.segPxV = null;
   calApply();
 }
 
 /* Ask what the marked distance actually was. Asked after marking rather than
    before, because you do not know which increment you can hold the reticle on
    until you are looking at the photograph. */
-function calSheet(axis) {
+function calSheet(axis, again) {
   markClose();
-  const u = TGT.cal.refUnit || "in";
-  openSheet("How long was that?", `
+  const u = (axis === "v" ? TGT.cal.refUnitV : TGT.cal.refUnit) || TGT.cal.refUnit || "in";
+  const cur = axis === "v"
+    ? (TGT.cal.refLenV == null ? TGT.cal.refLen : TGT.cal.refLenV)
+    : TGT.cal.refLen;
+  void again;
+  openSheet(axis === "v" ? "How long was the down one?" : "How long was that?", `
     <p class="hint">The real distance between the two marks. A longer reference is
       a smaller error for the same effort, so use the longest increment you could
-      hold the reticle on.</p>
+      hold the reticle on.${axis === "v"
+        ? " This is asked separately because it does not have to match the one across,\n        and assuming it did would put any difference straight into the vertical scale."
+        : ""}</p>
     <label class="f"><span>Distance</span>
       <input name="len" type="number" step="0.01" inputmode="decimal"
-        value="${esc(String(TGT.cal.refLen || 1))}"></label>
+        value="${esc(String(cur || 1))}"></label>
     <label class="f"><span>Units</span>
       <select name="unit">
         <option value="in"${u === "in" ? " selected" : ""}>inches</option>
@@ -5460,25 +5705,40 @@ ACT["tgt-callen"] = (axis) => {
   const v = readForm($("#sheetbody"));
   const len = n(v.len);
   if (!(len > 0)) { toast("That length needs to be above zero."); return; }
+  if (axis === "v") {
+    TGT.cal.refLenV = len;
+    TGT.cal.refUnitV = v.unit || "in";
+    closeSheet();
+    calApply();
+    return;
+  }
   TGT.cal.refLen = len;
   TGT.cal.refUnit = v.unit || "in";
   closeSheet();
-  if (axis === "h") targetStep("calV");
-  else calApply();
+  targetStep("calV");
 };
 
 /* Both spans known: turn them into the target's extent in inches. */
 function calApply() {
   const c = calibrate({
     refLen: TGT.cal.refLen, refUnit: TGT.cal.refUnit,
-    spanH: TGT.cal.spanH, spanV: TGT.cal.spanV,
+    refLenV: TGT.cal.refLenV, refUnitV: TGT.cal.refUnitV,
+    segPxH: TGT.cal.segPxH, segPxV: TGT.cal.segPxV,
     imgW: TGT.target.imgW, imgH: TGT.target.imgH,
   });
   if (!c) { toast("That calibration did not work out. Start again."); TGT = null; markClose(); render(); return; }
   Object.assign(TGT.target, {
     widthIn: c.widthIn, heightIn: c.heightIn, squared: c.squared,
-    refLen: c.refLen, refUnit: c.refUnit, spanH: c.spanH, spanV: c.spanV,
+    refLen: c.refLen, refUnit: c.refUnit,
+    refLenV: c.refLenV, refUnitV: c.refUnitV,
+    segPxH: c.segPxH, segPxV: c.segPxV, axisSkew: c.axisSkew,
   });
+  /* The two axes should agree to a fraction of a per cent on a flat target.
+     A large disagreement is nearly always one of two things, and both are
+     worth catching before the numbers are believed. */
+  if (c.axisSkew != null && Math.abs(c.axisSkew) > 0.03) {
+    toast(`The two references disagree by ${Math.abs(c.axisSkew * 100).toFixed(0)}%. Check the down one.`);
+  }
   setupSheet();
 }
 
@@ -5498,10 +5758,7 @@ function setupSheet() {
         ${selOptsGrouped(S.firearms, fid, (x) => x.name, (x) => x.caliber || "Caliber not set")}
       </select></label>
     <label class="f"><span>Load</span>
-      <select name="ammoId">${selOptsGrouped(S.ammo,
-        (g && g.ammoId) || lastAmmoFor(f ? f.caliber : "") || (S.ammo[0] || {}).id,
-        (x) => ammoLabel(x), (x) => x.caliber || "Caliber not set")}
-      </select></label>
+      <select name="ammoId" id="tgtammo">${ammoOpts(f, (g && g.ammoId))}</select></label>
     <div class="f2">
       <label class="f"><span>Distance</span>
         <input name="distance" type="number" inputmode="numeric" value="${esc(String(t.distance || 100))}"></label>
@@ -5516,6 +5773,9 @@ function setupSheet() {
         value="${esc(String(dia))}"></label>
     <p class="hint">Sets the size of the reticle, so it covers the hole rather than
       guessing at its middle. It is the bullet, not the calibre name: 5.56 is a .224.</p>
+    <div class="btnrow" style="margin:-4px 0 12px">
+      <button class="btn sm" data-act="tgt-allammo" id="tgtallammo">${
+        TGT && TGT.allAmmo ? "Only what it chambers" : "Show every load"}</button></div>
     <div class="f2">
       <label class="f"><span>Date</span>
         <input name="date" type="date" value="${esc(t.date)}"></label>
@@ -5527,18 +5787,42 @@ function setupSheet() {
     <button class="btn pri wide" data-act="tgt-setup-go">Mark the point of aim</button>`);
 }
 
-/* Changing the firearm refills the bullet diameter, unless it was typed over. */
+/* The loads this rifle will chamber, with an escape hatch. Wildcats, rebarrels
+   and anything the table does not know about still have to be reachable, so
+   "show every load" is always there rather than the list simply being wrong. */
+function ammoOpts(f, chosen) {
+  const fit = ammoForGun(f);
+  const all = TGT && TGT.allAmmo;
+  const list = all ? (S.ammo || []) : fit;
+  const pick = (chosen && list.some((x) => x.id === chosen)) ? chosen
+    : (lastAmmoFor(f ? f.caliber : "") && list.some((x) => x.id === lastAmmoFor(f.caliber))
+        ? lastAmmoFor(f.caliber) : (list[0] || {}).id);
+  return selOptsGrouped(list, pick, (x) => ammoLabel(x), (x) => x.caliber || "Caliber not set");
+}
+
+/* Changing the firearm refills the bullet diameter and narrows the loads. */
 ACT["tgt-gunpick"] = () => {
-  const sel = $("#tgtgun"), dia = $("#tgtdia");
-  if (!sel || !dia) return;
+  const sel = $("#tgtgun"), dia = $("#tgtdia"), am = $("#tgtammo");
+  if (!sel) return;
   const f = gun(sel.value);
   const d = f ? bulletDiaFor(f.caliber) : null;
-  if (d) dia.value = String(d);
+  if (dia && d) dia.value = String(d);
+  if (am) am.innerHTML = ammoOpts(f, am.value);
+};
+
+ACT["tgt-allammo"] = () => {
+  if (!TGT) return;
+  TGT.allAmmo = !TGT.allAmmo;
+  const sel = $("#tgtgun"), am = $("#tgtammo");
+  if (am) am.innerHTML = ammoOpts(gun(sel ? sel.value : null), am.value);
+  const b = $("#tgtallammo");
+  if (b) b.textContent = TGT.allAmmo ? "Only what it chambers" : "Show every load";
 };
 
 ACT["tgt-setup-go"] = () => {
   const v = readForm($("#sheetbody"));
   if (!v.firearmId) { toast("Pick the firearm."); return; }
+  if (!v.ammoId) { toast("Pick the load, or tap Show every load if it is not listed."); return; }
   if (!(n(v.distance) > 0)) { toast("The distance needs to be above zero."); return; }
   Object.assign(TGT.target, {
     distance: n(v.distance), distanceUnit: v.distanceUnit || "yd",
@@ -5584,11 +5868,17 @@ async function groupDone() {
 /* Another group on the same photograph, possibly a different rifle. */
 ACT["tgt-another"] = () => {
   if (!TGT || !TGT.bmp) { toast("That photograph is no longer open for marking."); return; }
-  closeSheet();
+  /* Not closeSheet() first: closing pops a history entry and opening pushes
+     one straight back, and on a phone the two raced badly enough that the
+     sheet shut and nothing reopened, which looked exactly like Finished.
+     openSheet replaces the contents anyway. */
+  TGT.current = null;
+  TGT.holdImpacts = null;
   setupSheet();
 };
 
 ACT["tgt-done"] = () => {
+  TGT_SHEET = null;
   if (TGT && TGT.bmp && TGT.bmp.close) { try { TGT.bmp.close(); } catch (e) {} }
   TGT = null;
   closeSheet();
@@ -5599,9 +5889,12 @@ ACT["tgt-done"] = () => {
 /* ---------------------------------------------------------------- results */
 ACT["tgt-open"] = (id) => targetSheet(id);
 
+let TGT_SHEET = null;
+
 function targetSheet(id) {
   const t = targetOf(id);
-  if (!t) { closeSheet(); return; }
+  if (!t) { closeSheet(); TGT_SHEET = null; return; }
+  TGT_SHEET = id;
   const gs = groupsFor(id);
 
   let h = `<dl class="card">
@@ -5659,19 +5952,20 @@ function num(label, value, unit) {
 }
 
 function groupNums(s, t) {
-  const inch = (v) => v.toFixed(3) + '"';
-  const moa = (v) => (v == null ? "\u2014" : v.toFixed(2) + "'");
+  const sz = (v) => showLen(v, t, "size");
+  const alt = (v) => showAlt(v, t, "size");
+  const zr = (v) => showLen(Math.abs(v), t, "zero");
   let h = `<div class="gnums">
     ${num("Shots", fmt(s.n) + (s.excluded ? ` of ${fmt(s.marked)}` : ""))}
-    ${num("Group", moa(s.esMoa), inch(s.es))}
-    ${num("Mean radius", moa(s.mrMoa), inch(s.mr))}
-    ${num("Width \u00d7 height", moa(s.widthMoa) + " \u00d7 " + moa(s.heightMoa))}
-    ${num("Horizontal SD", inch(s.sdH))}
-    ${num("Vertical SD", inch(s.sdV))}`;
-  if (s.r50 != null) h += num("R50", moa(s.r50Moa), inch(s.r50));
+    ${num("Group", sz(s.es), alt(s.es))}
+    ${num("Mean radius", sz(s.mr), alt(s.mr))}
+    ${num("Width \u00d7 height", sz(s.width) + " \u00d7 " + sz(s.height))}
+    ${num("Horizontal SD", sz(s.sdH))}
+    ${num("Vertical SD", sz(s.sdV))}`;
+  if (s.r50 != null) h += num("R50", sz(s.r50), alt(s.r50));
   if (s.zero) {
-    h += num("Windage", (s.zero.rightMoa >= 0 ? "R " : "L ") + Math.abs(s.zero.rightMoa).toFixed(2) + "'");
-    h += num("Elevation", (s.zero.upMoa >= 0 ? "U " : "D ") + Math.abs(s.zero.upMoa).toFixed(2) + "'");
+    h += num("Windage", (s.zero.right >= 0 ? "R " : "L ") + zr(s.zero.right));
+    h += num("Elevation", (s.zero.up >= 0 ? "U " : "D ") + zr(s.zero.up));
   }
   h += `</div>`;
   if (s.n < 5) {
@@ -5683,22 +5977,21 @@ function groupNums(s, t) {
   return h;
 }
 
-function aggNums(agg) {
-  const moa = (v) => (v == null ? "\u2014" : v.toFixed(2) + "'");
+function aggNums(agg, t) {
+  const sz = (v) => showLen(v, t, "size");
   let h = `<div class="gnums">
     ${num("Groups", fmt(agg.groups))}
     ${num("Shots", fmt(agg.shots))}
-    ${num("Mean radius", moa(agg.mrMoa), agg.mr.toFixed(3) + '"')}
-    ${num("R50", moa(agg.r50Moa))}
-    ${num("R95", moa(agg.r95Moa))}
-    ${num("Expected 5-shot group", agg.distIn
-      ? ((agg.expectedEs(5) / agg.distIn) / MOA_RAD).toFixed(2) + "'"
-      : agg.expectedEs(5).toFixed(3) + '"')}
+    ${num("Mean radius", sz(agg.mr), showAlt(agg.mr, t, "size"))}
+    ${num("R50", sz(agg.r50))}
+    ${num("R95", sz(agg.r95))}
+    ${num("Expected 5-shot group", sz(agg.expectedEs(5)))}
   </div>`;
-  if (agg.ciMoa) {
+  if (agg.ci) {
     h += `<p class="hint" style="margin-top:8px">Mean radius is somewhere between
-      ${esc(agg.ciMoa.lo.toFixed(2))}' and ${esc(agg.ciMoa.hi.toFixed(2))}' with ninety per
-      cent confidence. Two loads whose intervals overlap have not been told apart.</p>`;
+      ${esc(showLen(MR_K * agg.ci.lo, t, "size"))} and ${esc(showLen(MR_K * agg.ci.hi, t, "size"))}
+      with ninety per cent confidence. Two loads whose intervals overlap have not been
+      told apart.</p>`;
   }
   /* The measured mean radius against the one the model predicts. A wide gap
      says the shots are not a round cloud, so the percentile figures above are
