@@ -230,13 +230,28 @@ dl{margin:0}
   background:rgba(16,18,20,0.92);color:#E8E6E1;font-family:var(--sans)}
 .markhead b{display:block;font-size:0.9375rem;font-weight:600}
 .markhead span{display:block;font-size:0.8125rem;color:#A8A49C;margin-top:2px}
+/* Confirm dead centre, because it is pressed with the other thumb while the
+   first holds the reticle, and the centre is the only place both hands can
+   reach without looking. Done is banished to the far corner: it ends the group,
+   and it used to sit next to Confirm where it was hit by accident. */
 .markbar{padding:10px 12px calc(10px + env(safe-area-inset-bottom)) 12px;
-  background:rgba(16,18,20,0.92);display:flex;gap:8px;align-items:center}
+  background:rgba(16,18,20,0.92);display:grid;align-items:center;
+  grid-template-columns:1fr auto 1fr;gap:8px}
+.markbar .mb-l{display:flex;gap:8px;align-items:center;justify-self:start}
+.markbar .mb-c{display:flex;gap:10px;align-items:center;justify-self:center}
+.markbar .mb-r{display:flex;gap:8px;align-items:center;justify-self:end}
+.markbar .mb-r .btn{background:transparent;border-color:#3A3F43;color:#A8A49C}
+.markflags{padding:0 12px 8px;background:rgba(16,18,20,0.92);display:flex;gap:8px;
+  align-items:center;justify-content:center}
+.markflags .btn{font-size:0.75rem;padding:6px 10px}
+.markflags .btn.pulled{border-color:#FF3B30;color:#FF6B62}
+.markflags .btn.cold{border-color:#4DD6FF;color:#7FE2FF}
+.markflags .btn.on{background:rgba(255,255,255,0.12)}
 .markbar .btn{background:#24282B;border-color:#3A3F43;color:#E8E6E1;flex:0 0 auto}
 .markbar .btn.pri{background:var(--brass);border-color:var(--brass);color:#15181A}
 .markbar .btn:disabled{opacity:0.45}
-.markbar .grow{flex:1;min-width:0;color:#A8A49C;font-size:0.8125rem;
-  font-family:var(--sans);text-align:center}
+.markbar .grow{color:#A8A49C;font-size:0.8125rem;font-family:var(--sans);
+  white-space:nowrap}
 .markzoom{position:absolute;right:10px;top:50%;transform:translateY(-50%);
   display:flex;flex-direction:column;gap:6px}
 .markzoom button{width:38px;height:38px;border-radius:9px;border:1px solid #3A3F43;
@@ -3632,7 +3647,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-817a5a";
+const APP_VERSION = "2026.09.14-af658b";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4541,6 +4556,10 @@ function backupPanel() {
 function distIn(t) {
   const d = n(t && t.distance);
   if (!d) return 0;
+  /* in_raw is a stand-in used where only a distance is to hand and it is
+     already in inches, so a pooled figure spanning several targets can still
+     be turned into minutes. */
+  if (t.distanceUnit === "in_raw") return d;
   return (t.distanceUnit === "m") ? d * 39.3700787 : d * 36;
 }
 
@@ -4918,9 +4937,15 @@ function aggregate(pairs) {
   if (!usable.length) return null;
 
   const dev = [];
+  const per = [];
   usable.forEach((p) => {
     const c = centroidOf(p.pts);
-    p.pts.forEach((q) => dev.push(Math.hypot(q.x - c.x, q.y - c.y)));
+    let ss = 0;
+    p.pts.forEach((q) => {
+      const r = Math.hypot(q.x - c.x, q.y - c.y);
+      dev.push(r); ss += r * r;
+    });
+    per.push({ ss, dof: 2 * (p.pts.length - 1), n: p.pts.length });
   });
 
   const k = usable.length, N = dev.length;
@@ -4940,9 +4965,120 @@ function aggregate(pairs) {
        real stringing — and that the model's numbers deserve less trust. */
     mrObserved: dev.reduce((s, r) => s + r, 0) / N,
     ci: sigmaCI(sigma, dof),
+    /* Whether these groups look like repeats of one thing. */
+    consistency: consistency(per),
     /* The group size this dispersion would be expected to produce. */
     expectedEs: (shots) => esFactor(shots) * sigma,
   };
+}
+
+/* ------------------------------------------------------ what a group was */
+/* Tagged when the shot is set up, before the holes are in the paper, which is
+   the whole point. Deciding after the fact which groups "count" quietly drops
+   the wide ones — there is always a reason, and the reason is usually true,
+   but the groups that make you look for a reason are the wide ones. Filtering
+   on intent is defensible in a way that filtering on outcome is not. */
+const GROUP_KINDS = [
+  { k: "loadtest", label: "Load test", agg: true },
+  { k: "zero", label: "Zero check", agg: true },
+  { k: "practice", label: "Practice", agg: false },
+  { k: "foulers", label: "Foulers", agg: false },
+];
+const kindLabel = (k) => (GROUP_KINDS.find((x) => x.k === k) || GROUP_KINDS[0]).label;
+const AGG_KINDS_KEY = "armory.aggkinds";
+function aggKinds() {
+  const v = (typeof lsGet === "function" && lsGet(AGG_KINDS_KEY)) || null;
+  return Array.isArray(v) ? v : GROUP_KINDS.filter((x) => x.agg).map((x) => x.k);
+}
+function setAggKinds(list) { if (typeof lsSet === "function") lsSet(AGG_KINDS_KEY, list); }
+
+/* Per-shot notes. Neither excludes the shot: a called flyer is still a shot
+   that left the barrel, and a cold bore is the most honest shot of the string.
+   They are marked so the picture explains itself. */
+const SHOT_FLAGS = {
+  pulled: { label: "Pulled", colour: "#FF3B30" },
+  cold: { label: "Cold bore", colour: "#4DD6FF" },
+};
+const flagOf = (g, i) => (g && g.flags && g.flags[String(i)]) || null;
+
+/* ---------------------------------------------------------- distances */
+const DIST_TOL_KEY = "armory.disttol";
+function distTol() {
+  const v = (typeof lsGet === "function" && lsGet(DIST_TOL_KEY));
+  return v > 0 ? v : 0.10;
+}
+function setDistTol(v) { if (typeof lsSet === "function") lsSet(DIST_TOL_KEY, v); }
+
+/* The distance a rifle is normally zeroed and grouped at. A fact about how the
+   rifle is used, so it lives on the rifle. Rimfire defaults to fifty yards and
+   everything else to a hundred, which is what they will nearly always be. */
+function refDistOf(f) {
+  if (!f) return { distance: 100, distanceUnit: "yd" };
+  if (n(f.refDist) > 0) return { distance: n(f.refDist), distanceUnit: f.refDistUnit || "yd" };
+  const k = calKey(f.caliber);
+  if (k === ".22lr" || k === "22lr") return { distance: 50, distanceUnit: "yd" };
+  return { distance: 100, distanceUnit: "yd" };
+}
+
+/* Two distances count as the same when they are within tolerance. A lased 97
+   yards logged honestly is the same shot as a nominal 100; fifty and a hundred
+   never are. */
+function sameDist(a, b, tol) {
+  if (!(a > 0) || !(b > 0)) return false;
+  return Math.abs(a - b) / Math.max(a, b) <= (tol == null ? distTol() : tol);
+}
+
+/* Sort a set of targets into distance buckets, largest first. Greedy, which is
+   right here: real distances cluster hard around a few round numbers. */
+function distBuckets(items, tol) {
+  const t = tol == null ? distTol() : tol;
+  const out = [];
+  items.slice()
+    .sort((x, y) => distIn(y.t) - distIn(x.t))
+    .forEach((it) => {
+      const d = distIn(it.t);
+      if (!(d > 0)) return;
+      const hit = out.find((b) => sameDist(b.distIn, d, t));
+      if (hit) { hit.items.push(it); hit.sum += d; hit.distIn = hit.sum / hit.items.length; }
+      else out.push({ distIn: d, sum: d, items: [it], unit: it.t.distanceUnit || "yd" });
+    });
+  return out;
+}
+
+/* --------------------------------------------------------- consistency */
+/* Do these groups look like repeats of one thing?
+
+   Each group carries its own dispersion estimate with known degrees of
+   freedom, so whether the spread among those estimates is more than sampling
+   noise alone would produce is a question with an answer rather than a matter
+   of opinion. This is Bartlett's test on the per-group variances.
+
+   It is reported, never enforced. A wide group might be the wind getting up,
+   and you were there and the app was not. But pooling groups that are not
+   repeats of the same thing produces a number describing nothing, and that is
+   worth saying out loud. */
+function consistency(groupsSS) {
+  const use = groupsSS.filter((g) => g.dof > 0);
+  const k = use.length;
+  if (k < 2) return null;
+  const totDof = use.reduce((t, g) => t + g.dof, 0);
+  const pooled = use.reduce((t, g) => t + g.ss, 0) / totDof;
+  if (!(pooled > 0)) return null;
+
+  let sumLn = 0, sumInv = 0, bad = false;
+  use.forEach((g) => {
+    const v = g.ss / g.dof;
+    if (!(v > 0)) bad = true;
+    else sumLn += g.dof * Math.log(v);
+    sumInv += 1 / g.dof;
+  });
+  if (bad) return null;
+
+  const T0 = totDof * Math.log(pooled) - sumLn;
+  const C = 1 + (sumInv - 1 / totDof) / (3 * (k - 1));
+  const T = T0 / C;
+  const p = 1 - gammaP((k - 1) / 2, T / 2);
+  return { stat: T, dof: k - 1, p, consistent: p >= 0.05, groups: k };
 }
 
 /* ------------------------------------------------------- uncertainty */
@@ -5008,31 +5144,100 @@ function sigmaCI(sigma, dof, conf) {
   return { lo: sigma * Math.sqrt(dof / hi), hi: sigma * Math.sqrt(dof / lo), conf: conf || 0.90 };
 }
 
-/* The aggregate for a rifle and load, straight from the log. */
-function aggregateFor(firearmId, ammoId) {
+/* The aggregate for a rifle and load, scoped.
+
+   Scoping is the whole design. Dispersion at twenty yards and at a hundred are
+   not the same quantity even in minutes — wind drift grows faster than time of
+   flight, velocity spread opens vertical with range, and aiming error is a far
+   bigger angle up close — so distance is part of the key rather than something
+   averaged over. Intent is part of it too: foulers and position practice are
+   real shooting but they are not measurements of this load.
+
+   opts.distIn   only groups shot at this distance, within tolerance
+   opts.kinds    which group kinds count; defaults to the setting
+   opts.groups   an explicit set, for "everything on this one target"          */
+function aggregateFor(firearmId, ammoId, opts) {
+  const o = opts || {};
   const ts = {};
   (S.targets || []).forEach((t) => { ts[t.id] = t; });
-  const pairs = groupsOf(firearmId, ammoId)
-    .map((g) => ({ g, t: ts[g.targetId] }))
-    .filter((p) => p.t && n(p.t.widthIn) > 0)
-    .map((p) => ({ pts: impactsOf(p.t, p.g), t: p.t }));
-  const agg = aggregate(pairs);
+
+  let gs = o.groups || groupsOf(firearmId, ammoId);
+  const kinds = o.kinds || aggKinds();
+  const before = gs.length;
+  gs = gs.filter((g) => kinds.indexOf(g.kind || "loadtest") > -1);
+  const wrongKind = before - gs.length;
+
+  let pairs = gs.map((g) => ({ g, t: ts[g.targetId] }))
+    .filter((p) => p.t && n(p.t.widthIn) > 0);
+
+  let atDist = 0;
+  if (o.distIn > 0) {
+    const all = pairs.length;
+    pairs = pairs.filter((p) => sameDist(distIn(p.t), o.distIn, o.tol));
+    atDist = all - pairs.length;
+  }
+
+  const agg = aggregate(pairs.map((p) => ({ pts: impactsOf(p.t, p.g), t: p.t })));
   if (!agg) return null;
-  /* Angular units need a distance, and pooling can span several. Where they
-     all match, report it; where they do not, leave it in inches rather than
-     quietly pick one. */
+
+  /* How much was left out, and why. Shown on the face of the figure: a pooled
+     number with a quiet filter behind it is how an honest average turns into a
+     flattering one. */
+  agg.omitted = { kind: wrongKind, distance: atDist };
+  agg.excludedShots = pairs.reduce((t, p) => t + ((p.g.excluded || []).length), 0);
+  agg.kinds = kinds;
+
   const dists = Array.from(new Set(pairs.map((p) => distIn(p.t)).filter(Boolean)));
-  if (dists.length === 1) {
-    const moa = (v) => (v / dists[0]) / MOA_RAD;
-    agg.distIn = dists[0];
+  if (dists.length) {
+    const ref = dists.reduce((t, d) => t + d, 0) / dists.length;
+    const moa = (v) => (v / ref) / moaRad();
+    agg.distIn = ref;
+    agg.distances = dists.length;
     agg.mrMoa = moa(agg.mr);
     agg.r50Moa = moa(agg.r50);
     agg.r95Moa = moa(agg.r95);
-    /* The interval belongs on the mean radius too, since that is the figure
-       anyone will actually compare between loads. */
     agg.ciMoa = agg.ci ? { lo: moa(MR_K * agg.ci.lo), hi: moa(MR_K * agg.ci.hi) } : null;
   }
   return agg;
+}
+
+/* Every distance this rifle and load has been shot at, each pooled on its own,
+   with the rifle's reference distance first. Nothing is hidden; it is just
+   sorted so the figure that matters leads. */
+function aggregateByDistance(firearmId, ammoId, refIn0) {
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+  const kinds = aggKinds();
+  const pairs = groupsOf(firearmId, ammoId)
+    .filter((g) => kinds.indexOf(g.kind || "loadtest") > -1)
+    .map((g) => ({ g, t: ts[g.targetId] }))
+    .filter((p) => p.t && n(p.t.widthIn) > 0);
+
+  return distBuckets(pairs)
+    .map((b) => {
+      const agg = aggregateFor(firearmId, ammoId, { groups: b.items.map((x) => x.g), distIn: b.distIn });
+      return agg ? Object.assign(agg, { bucketIn: b.distIn, unit: b.unit,
+        isRef: refIn0 > 0 && sameDist(b.distIn, refIn0) }) : null;
+    })
+    .filter(Boolean)
+    .sort((x, y) => (y.isRef ? 1 : 0) - (x.isRef ? 1 : 0) || y.bucketIn - x.bucketIn);
+}
+
+/* Everything fired at one target, pooled. The strongest case there is: five
+   groups on one page, minutes apart, same everything. */
+function aggregateTarget(targetId, firearmId, ammoId) {
+  const gs = groupsFor(targetId).filter((g) =>
+    (!firearmId || g.firearmId === firearmId) && (!ammoId || g.ammoId === ammoId));
+  if (gs.length < 2) return null;
+  const t = targetOf(targetId);
+  return aggregateFor(firearmId, ammoId, { groups: gs, distIn: t ? distIn(t) : 0 });
+}
+
+/* A distance in whole units for a label, from inches. */
+function distLabel(inches, unit) {
+  if (!(inches > 0)) return "";
+  const v = unit === "m" ? inches / 39.3700787 : inches / 36;
+  return `${Math.round(v)} ${unit === "m" ? "m" : "yd"}`;
 }
 </script>
 <script>
@@ -5104,13 +5309,16 @@ RENDER.targets = () => {
   const branches = rifles.map((fid) => {
     const f = gun(fid);
     const mine = groups.filter((g) => g.firearmId === fid);
-    const agg = aggregateFor(fid, null);
+    const rd = refDistOf(f);
     return {
       key: "tgt:" + fid,
       name: f ? f.name : "Firearm removed",
-      sub: f ? f.caliber : "",
+      sub: `${f ? f.caliber : ""} \u00b7 ${rd.distance}${rd.distanceUnit}`,
       count: mine.length,
-      tag: agg ? `<span class="tag moss">${esc(showLen(agg.mr, aggRef(fid, null), "size"))} MR</span>` : "",
+      /* Deliberately not a pooled figure. One number for a rifle across every
+         distance and every kind of shooting implies a claim the app has not
+         checked; the figures live inside, where their scope is named. */
+      tag: `<span class="tag mute">${plural(mine.length, "group")}</span>`,
       body: () => rifleTargets(fid),
     };
   });
@@ -5128,18 +5336,26 @@ function rifleTargets(fid) {
   const loads = [];
   mine.forEach((g) => { if (loads.indexOf(g.ammoId) < 0) loads.push(g.ammoId); });
 
+  const f = gun(fid);
+  const rd = refDistOf(f);
+  const refInches = rd.distanceUnit === "m" ? rd.distance * 39.3700787 : rd.distance * 36;
+
   let h = `<div class="rows">`;
   loads.forEach((aid) => {
     const a = ammoOf(aid);
-    const agg = aggregateFor(fid, aid);
     const gs = mine.filter((g) => g.ammoId === aid);
     h += `<div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
       <span style="display:flex;gap:10px;align-items:baseline">
         <span class="grow"><span class="ttl">${esc(a ? ammoLabel(a) : "Load removed")}</span>
-        <span class="meta">${plural(gs.length, "group")} &middot;
-          ${plural(agg ? agg.shots : 0, "shot")}</span></span>
+        <span class="meta">${plural(gs.length, "group")}</span></span>
       </span>`;
-    if (agg) h += aggLine(agg, aggRef(fid, aid));
+    /* Every distance, its own pooled figure, the rifle's usual one first.
+       Nothing is hidden and nothing is blurred together. */
+    const buckets = aggregateByDistance(fid, aid, refInches);
+    if (!buckets.length) {
+      h += `<span class="meta">Nothing that counts toward a pooled figure yet.</span>`;
+    }
+    buckets.forEach((b) => { h += aggLine(b, b.items ? null : bucketRef(fid, aid, b)); });
     h += `</div>`;
   });
   h += `</div>`;
@@ -5182,8 +5398,9 @@ function unitPanel() {
     `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
   const lens = (cur) => opt("moa", cur, "MOA") + opt("mil", cur, "Mils")
     + opt("in", cur, "Inches") + opt("cm", cur, "Centimetres") + opt("mm", cur, "Millimetres");
+  const kinds = aggKinds();
   return `<details class="card" style="margin-bottom:14px">
-    <summary style="cursor:pointer;font-weight:550;font-size:0.9375rem">Units</summary>
+    <summary style="cursor:pointer;font-weight:550;font-size:0.9375rem">Display and pooling</summary>
     <div class="f2" style="margin-top:10px">
       <label class="f"><span>Group and spread</span>
         <select data-act-change="tgt-units" data-unit="size" id="u-size">${lens(u.size)}</select></label>
@@ -5195,13 +5412,44 @@ function unitPanel() {
         ${opt("true", u.moa, "True MOA (1.047\u2033 at 100 yd)")}
         ${opt("shooter", u.moa, "Shooter\u2019s MOA (1.000\u2033 at 100 yd)")}
       </select></label>
-    <p class="hint" style="margin:0">Most apps that disagree with this one about a group
-      size are using the other convention. They differ by 4.7 per cent, which is the
-      whole of the difference and none of it is measurement.</p>
+    <p class="hint">Most apps that disagree with this one about a group size are using
+      the other convention. They differ by 4.7 per cent, which is the whole of the
+      difference and none of it is measurement.</p>
+
+    <label class="f"><span>Distances count as the same within</span>
+      <select data-act-change="tgt-units" data-unit="tol" id="u-tol">
+        ${[0.02, 0.05, 0.10, 0.15].map((v) =>
+          `<option value="${v}"${Math.abs(distTol() - v) < 1e-9 ? " selected" : ""}>${
+            (v * 100).toFixed(0)}%</option>`).join("")}
+      </select></label>
+    <p class="hint">A lased 97 yards logged honestly is the same shot as a nominal 100
+      and should pool with it. Fifty and a hundred never should, because dispersion in
+      minutes is not the same quantity at both.</p>
+
+    <fieldset><legend>Counts toward a pooled figure</legend>
+      ${GROUP_KINDS.map((x) => `<label class="f" style="flex-direction:row;align-items:center;gap:10px">
+        <input type="checkbox" data-act-change="tgt-aggkinds" name="k-${esc(x.k)}"${
+          kinds.indexOf(x.k) > -1 ? " checked" : ""} style="width:auto">
+        <span style="flex:1">${esc(x.label)}</span></label>`).join("")}
+    </fieldset>
+    <p class="hint" style="margin:0">Chosen by what a group was for, decided before it was
+      shot. Filtering afterwards on how it turned out is how an average quietly becomes a
+      flattering one.</p>
   </details>`;
 }
 
+ACT["tgt-aggkinds"] = () => {
+  const on = GROUP_KINDS.map((x) => x.k).filter((k) => {
+    const el = document.querySelector(`[name="k-${k}"]`);
+    return !!(el && el.checked);
+  });
+  setAggKinds(on.length ? on : ["loadtest"]);
+  render();
+};
+
 ACT["tgt-units"] = () => {
+  const tol = $("#u-tol");
+  if (tol) setDistTol(Number(tol.value) || 0.10);
   setUnits({
     size: ($("#u-size") || {}).value || "moa",
     zero: ($("#u-zero") || {}).value || "moa",
@@ -5220,15 +5468,35 @@ function aggRef(fid, aid) {
   return last ? targetOf(last.targetId) : null;
 }
 
+/* A stand-in target carrying just the distance, which is all showLen needs to
+   turn inches into minutes. */
+const bucketRef = (fid, aid, b) => ({ distance: b.bucketIn, distanceUnit: "in_raw",
+  __inches: b.bucketIn });
+
 /* The pooled estimate, with its interval. The interval is not decoration:
    without it two loads that differ by nothing look different. */
-function aggLine(agg, t) {
-  const ci = agg.ci
-    ? `${showLen(MR_K * agg.ci.lo, t, "size")} to ${showLen(MR_K * agg.ci.hi, t, "size")}`
-    : null;
-  return `<span class="meta" style="font-family:var(--mono)">
-    Mean radius ${esc(showLen(agg.mr, t, "size"))}${ci ? ` &middot; 90% ${esc(ci)}` : ""}
-    &middot; expected 5-shot group ${esc(showLen(agg.expectedEs(5), t, "size"))}</span>`;
+/* One pooled figure, with everything needed to judge it: how much it rests on,
+   how uncertain it is, what was left out, and whether the groups behind it look
+   like repeats of one thing. */
+function aggLine(agg) {
+  const t = { distance: agg.distIn || agg.bucketIn, distanceUnit: "in_raw" };
+  const ang = (v) => showLen(v, t, "size");
+  const ci = agg.ci ? `${ang(MR_K * agg.ci.lo)} to ${ang(MR_K * agg.ci.hi)}` : null;
+  const om = [];
+  if (agg.omitted && agg.omitted.kind) om.push(`${agg.omitted.kind} not counted`);
+  if (agg.excludedShots) om.push(plural(agg.excludedShots, "shot") + " set aside");
+
+  let h = `<span class="meta" style="font-family:var(--mono)">
+    <b>${esc(distLabel(agg.bucketIn || agg.distIn, agg.unit))}</b>
+    &middot; ${plural(agg.groups, "group")}, ${plural(agg.shots, "shot")}
+    &middot; MR ${esc(ang(agg.mr))}${ci ? ` (90% ${esc(ci)})` : ""}</span>`;
+  if (om.length) h += `<span class="meta">${esc(om.join(" \u00b7 "))}</span>`;
+  if (agg.consistency && !agg.consistency.consistent) {
+    h += `<span class="meta" style="color:var(--flag)">These groups vary more than
+      chance explains, so they may not be repeats of the same thing. The figure above
+      pools them anyway.</span>`;
+  }
+  return h;
 }
 
 /* ------------------------------------------------------------- capturing */
@@ -5323,12 +5591,23 @@ function markLayer() {
       <button data-id="in" aria-label="Zoom in">+</button>
       <button data-id="out" aria-label="Zoom out">&minus;</button>
     </div>
+    <div class="markflags" id="markflags">
+      <button class="btn pulled" data-mact="tgt-flag" data-id="pulled">Pulled</button>
+      <button class="btn cold" data-mact="tgt-flag" data-id="cold">Cold bore</button>
+      <button class="btn" data-mact="tgt-pick">Select nearest</button>
+    </div>
     <div class="markbar">
-      <button class="btn" data-mact="tgt-back" id="markback">Back</button>
-      <button class="btn" data-mact="tgt-undo" id="markundo">Undo</button>
-      <span class="grow" id="markcount"></span>
-      <button class="btn" data-mact="tgt-skip" id="markskip">Skip</button>
-      <button class="btn pri" data-mact="tgt-confirm">Confirm</button>
+      <span class="mb-l">
+        <button class="btn" data-mact="tgt-back" id="markback">Back</button>
+        <button class="btn" data-mact="tgt-undo" id="markundo">Undo</button>
+      </span>
+      <span class="mb-c">
+        <button class="btn pri" data-mact="tgt-confirm" id="markok">Confirm</button>
+        <span class="grow" id="markcount"></span>
+      </span>
+      <span class="mb-r">
+        <button class="btn" data-mact="tgt-skip" id="markskip">Done</button>
+      </span>
     </div>`;
   document.body.appendChild(el);
   const cv = el.querySelector("#markcv");
@@ -5488,11 +5767,20 @@ function markPaint() {
     const r = markReticlePx() / 2 || 7 * dpr;
     (cur.impacts || []).forEach((m, i) => {
       const p = markToScreen(m);
-      g.strokeStyle = "#E9B44C"; g.lineWidth = 1.75 * dpr;
-      g.beginPath(); g.arc(p.x, p.y, Math.max(5 * dpr, r), 0, 7); g.stroke();
-      g.fillStyle = "rgba(233,180,76,0.95)";
+      const rr2 = Math.max(5 * dpr, r);
+      const f = flagOf(cur, i);
+      const col = f ? SHOT_FLAGS[f].colour : "#E9B44C";
+      if (TGT.sel === i) {
+        g.strokeStyle = "#FFFFFF"; g.lineWidth = 1.25 * dpr;
+        g.setLineDash([4 * dpr, 3 * dpr]);
+        g.beginPath(); g.arc(p.x, p.y, rr2 + 5 * dpr, 0, 7); g.stroke();
+        g.setLineDash([]);
+      }
+      g.strokeStyle = col; g.lineWidth = 1.75 * dpr;
+      g.beginPath(); g.arc(p.x, p.y, rr2, 0, 7); g.stroke();
+      g.fillStyle = col;
       g.font = `${11 * dpr}px ui-sans-serif, system-ui`;
-      g.fillText(String(i + 1), p.x + Math.max(5 * dpr, r) + 3 * dpr, p.y - 3 * dpr);
+      g.fillText(String(i + 1), p.x + rr2 + 3 * dpr, p.y - 3 * dpr);
     });
   }
 
@@ -5532,6 +5820,22 @@ function markChrome() {
 
   const back = el.querySelector("#markback");
   if (back) back.textContent = (step === "calH" && !(TGT.marks || []).length) ? "Cancel" : "Back";
+  const flags = el.querySelector("#markflags");
+  const ok = el.querySelector("#markok");
+  /* The flag row only belongs on the impacts step, and only once there is a
+     shot to attach a flag to. */
+  const nImp = (cur && cur.impacts) ? cur.impacts.length : 0;
+  if (flags) flags.hidden = !(step === "impacts" && nImp);
+  if (flags && !flags.hidden) {
+    const sel = TGT.sel == null ? nImp - 1 : TGT.sel;
+    const f = flagOf(cur, sel);
+    flags.querySelectorAll("[data-id]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.id === f);
+    });
+    const pick = flags.querySelector('[data-mact="tgt-pick"]');
+    if (pick) pick.textContent = TGT.sel == null ? "Select nearest" : `Shot ${TGT.sel + 1} selected`;
+  }
+  if (ok) ok.textContent = (step === "impacts" && TGT.sel != null) ? "Move here" : "Confirm";
 
   if (step === "measure") {
     count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
@@ -5550,10 +5854,10 @@ function markChrome() {
     undo.hidden = true;
   } else {
     const n0 = ((cur && cur.impacts) || []).length;
-    count.textContent = n0 ? plural(n0, "impact") : "no impacts yet";
+    count.textContent = n0 ? `${n0} marked` : "no impacts yet";
     skip.hidden = false;
-    skip.textContent = "Done";
-    undo.hidden = !n0;
+    skip.textContent = TGT.editing ? "Save" : "Done";
+    undo.hidden = !n0 || TGT.sel != null;
   }
 }
 
@@ -5653,7 +5957,46 @@ ACT["tgt-confirm"] = () => {
     targetStep("impacts");
     return;
   }
-  TGT.current.impacts.push(p);
+  if (TGT.sel != null && TGT.current.impacts[TGT.sel]) {
+    TGT.current.impacts[TGT.sel] = p;
+    TGT.sel = null;
+  } else {
+    TGT.current.impacts.push(p);
+  }
+  markPaint();
+};
+
+/* Pick the shot nearest the reticle, so an existing mark can be moved,
+   flagged or deleted without a tap landing on the canvas and being taken for
+   a pan. Selecting by button rather than by tap keeps the two unambiguous. */
+ACT["tgt-pick"] = () => {
+  if (!TGT || !TGT.current) return;
+  if (TGT.sel != null) { TGT.sel = null; markPaint(); return; }
+  const p = markPoint();
+  const imps = TGT.current.impacts || [];
+  if (!p || !imps.length) return;
+  let best = -1, bestD = Infinity;
+  imps.forEach((m, i) => {
+    const d = Math.hypot((m[0] - p[0]) * TGT.bmp.width, (m[1] - p[1]) * TGT.bmp.height);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  TGT.sel = best;
+  markPaint();
+};
+
+/* Neither flag removes the shot from the arithmetic. A called flyer still left
+   the barrel and a cold bore is often the most honest shot of the string; they
+   are marked so the picture explains itself, and so that a decision to exclude
+   one later is a separate, visible act. */
+ACT["tgt-flag"] = (which) => {
+  if (!TGT || !TGT.current) return;
+  const imps = TGT.current.impacts || [];
+  if (!imps.length) return;
+  const i = TGT.sel == null ? imps.length - 1 : TGT.sel;
+  TGT.current.flags = TGT.current.flags || {};
+  const key = String(i);
+  if (TGT.current.flags[key] === which) delete TGT.current.flags[key];
+  else TGT.current.flags[key] = which;
   markPaint();
 };
 
@@ -5694,10 +6037,30 @@ ACT["tgt-back"] = () => {
 
 ACT["tgt-undo"] = () => {
   if (!TGT) return;
-  if (TGT.step === "calH" || TGT.step === "calV") TGT.marks.pop();
-  else if (TGT.current) TGT.current.impacts.pop();
+  if (TGT.step === "calH") { TGT.marks.pop(); markPaint(); return; }
+  if (!TGT.current) return;
+  const imps = TGT.current.impacts || [];
+  const i = TGT.sel == null ? imps.length - 1 : TGT.sel;
+  imps.splice(i, 1);
+  /* Flags and exclusions are stored by position, so removing a shot has to
+     shift everything above it down or they attach to the wrong hole. */
+  TGT.current.flags = reindexBy(TGT.current.flags, i);
+  TGT.current.excluded = (TGT.current.excluded || [])
+    .filter((x) => x !== i).map((x) => (x > i ? x - 1 : x));
+  TGT.sel = null;
   markPaint();
 };
+
+function reindexBy(flags, removed) {
+  if (!flags) return flags;
+  const out = {};
+  Object.keys(flags).forEach((k) => {
+    const i = Number(k);
+    if (i === removed) return;
+    out[String(i > removed ? i - 1 : i)] = flags[k];
+  });
+  return out;
+}
 
 ACT["tgt-cancel"] = () => {
   if (!confirm("Discard this target? Nothing has been saved yet.")) return;
@@ -5708,7 +6071,9 @@ ACT["tgt-cancel"] = () => {
 
 ACT["tgt-skip"] = () => {
   if (!TGT) return;
-  if (TGT.step === "impacts") { groupDone(); return; }
+  if (TGT.step !== "impacts") return;
+  if (TGT.editing) { editDone(); return; }
+  groupDone();
 };
 
 /* A pair of calibration marks becomes a span. Which axis it measures decides
@@ -5831,9 +6196,15 @@ function setupSheet() {
   const t = TGT.target;
   const g = TGT.current;
   const lastF = (S.groups || []).length ? S.groups[S.groups.length - 1].firearmId : null;
-  const fid = (g && g.firearmId) || lastF || (S.firearms[0] || {}).id;
+  const fid = (g && g.firearmId) || (TGT.pick && TGT.pick.firearmId) || lastF || (S.firearms[0] || {}).id;
   const f = gun(fid);
   const dia = t.bulletDia || (f ? bulletDiaFor(f.caliber) : null) || 0.224;
+  /* A new target starts at the distance this rifle is normally used at, which
+     is right nearly every time and is the figure the pooled number keys on. */
+  if (!t.distanceSet) {
+    const rd = refDistOf(f);
+    t.distance = rd.distance; t.distanceUnit = rd.distanceUnit;
+  }
 
   /* A disagreement between the axes is worth saying plainly and then getting
      out of the way. Cant does not cause it — rotating a flat target changes no
@@ -5852,6 +6223,13 @@ function setupSheet() {
       </select></label>
     <label class="f"><span>Load</span>
       <select name="ammoId" id="tgtammo">${ammoOpts(f, (g && g.ammoId))}</select></label>
+    <label class="f"><span>What this group is</span>
+      <select name="kind">${GROUP_KINDS.map((x) =>
+        `<option value="${esc(x.k)}"${(g && g.kind || "loadtest") === x.k ? " selected" : ""}>${
+          esc(x.label)}</option>`).join("")}</select></label>
+    <p class="hint">Decided now rather than afterwards. Only load tests and zero checks
+      count toward a rifle's pooled figure by default, which is what stops the wide
+      groups quietly becoming the ones with a reason.</p>
     <div class="f2">
       <label class="f"><span>Distance</span>
         <input name="distance" type="number" inputmode="numeric" value="${esc(String(t.distance || 100))}"></label>
@@ -5922,13 +6300,13 @@ ACT["tgt-setup-go"] = () => {
   if (!v.ammoId) { toast("Pick the load, or tap Show every load if it is not listed."); return; }
   if (!(n(v.distance) > 0)) { toast("The distance needs to be above zero."); return; }
   Object.assign(TGT.target, {
-    distance: n(v.distance), distanceUnit: v.distanceUnit || "yd",
+    distance: n(v.distance), distanceUnit: v.distanceUnit || "yd", distanceSet: true,
     bulletDia: n(v.bulletDia) || 0.224,
     date: v.date || today(),
     tempF: v.tempF === "" || v.tempF == null ? null : n(v.tempF),
     notes: v.notes || "",
   });
-  TGT.pick = { firearmId: v.firearmId, ammoId: v.ammoId };
+  TGT.pick = { firearmId: v.firearmId, ammoId: v.ammoId, kind: v.kind || "loadtest" };
   closeSheet();
   targetStep("poa");
 };
@@ -5942,6 +6320,7 @@ async function groupDone() {
   if (!g.impacts.length) { toast("Mark at least one impact, or cancel."); return; }
   g.firearmId = TGT.pick.firearmId;
   g.ammoId = TGT.pick.ammoId;
+  g.kind = TGT.pick.kind || "loadtest";
 
   markClose();
   snapshot(TGT.committed ? "add a group" : "measure a target");
@@ -5982,6 +6361,51 @@ ACT["tgt-done"] = () => {
   markClose();
   render();
 };
+
+/* -------------------------------------------------------------- editing */
+/* Reopen a committed group for marking. A misplaced hole used to be permanent
+   once Done was pressed, which for a twenty-shot string is a lot to lose over
+   one bad tap. The photograph is stored and the marks are normalised, so there
+   is nothing stopping this beyond having built the door. */
+ACT["tgt-edit"] = async (gid) => {
+  const g = byId(S.groups || [], gid);
+  if (!g) return;
+  const t = targetOf(g.targetId);
+  if (!t) return;
+  const bmp = await targetBitmap(t);
+  if (!bmp) { toast("The photograph is not on this device."); return; }
+  TGT = {
+    target: t, committed: true, editing: gid, groups: [], bmp, marks: [], fitted: false,
+    pick: { firearmId: g.firearmId, ammoId: g.ammoId, kind: g.kind },
+    /* Worked on as a copy so that abandoning the edit leaves the log alone. */
+    current: JSON.parse(JSON.stringify(g)),
+    sel: null,
+  };
+  closeSheet();
+  targetStep("impacts");
+};
+
+function editDone() {
+  const gid = TGT.editing;
+  const g = byId(S.groups || [], gid);
+  if (!g) { TGT = null; markClose(); render(); return; }
+  if (!(TGT.current.impacts || []).length) {
+    toast("A group needs at least one impact. Delete it instead if that is what you want.");
+    return;
+  }
+  snapshot("edit impacts");
+  g.impacts = TGT.current.impacts;
+  g.flags = TGT.current.flags || {};
+  g.excluded = TGT.current.excluded || [];
+  g.poa = TGT.current.poa;
+  save();
+  render();
+  const tid = g.targetId, keep = TGT.bmp;
+  markClose();
+  TGT = { target: targetOf(tid), committed: true, groups: [], current: null, bmp: keep };
+  targetSheet(tid);
+  toast("Updated.");
+}
 
 /* ----------------------------------------------------------- recalibrate */
 /* Redo the scale on a target already in the log.
@@ -6118,6 +6542,7 @@ function targetSheet(id) {
       <p class="hint">${esc(a ? ammoLabel(a) : "Load removed")}</p>`;
     h += s ? groupNums(s, t) : `<div class="empty"><b>No impacts marked</b></div>`;
     h += `<span class="btnrow" style="margin-top:8px">
+      <button class="btn sm" data-act="tgt-edit" data-id="${esc(g.id)}">Edit impacts</button>
       <button class="btn sm dgr" data-act="tgt-gdel" data-id="${esc(g.id)}">Delete group</button>
       </span></section>`;
   });
@@ -6189,6 +6614,19 @@ function aggNums(agg, t) {
     ${num("R95", sz(agg.r95))}
     ${num("Expected 5-shot group", sz(agg.expectedEs(5)))}
   </div>`;
+  if (agg.consistency && !agg.consistency.consistent) {
+    h += `<p class="hint flag" style="margin-top:8px;color:var(--flag)">These groups vary
+      more than chance alone explains, so they may not be repeats of the same thing \u2014
+      a change in wind, position or lot will do it. The figures above pool them anyway;
+      narrowing the scope is up to you.</p>`;
+  }
+  if (agg.omitted && (agg.omitted.kind || agg.excludedShots)) {
+    const bits = [];
+    if (agg.omitted.kind) bits.push(`${plural(agg.omitted.kind, "group")} not counted as
+      ${esc(aggKinds().map(kindLabel).join(" or ").toLowerCase())}`);
+    if (agg.excludedShots) bits.push(plural(agg.excludedShots, "shot") + " set aside");
+    h += `<p class="hint" style="margin-top:6px">${bits.join("; ")}.</p>`;
+  }
   if (agg.ci) {
     h += `<p class="hint" style="margin-top:8px">Mean radius is somewhere between
       ${esc(showLen(MR_K * agg.ci.lo, t, "size"))} and ${esc(showLen(MR_K * agg.ci.hi, t, "size"))}
@@ -6253,8 +6691,8 @@ ACT["tgt-del"] = (id) => {
 
 let OVL = null;
 
-const OVL_DEF = { cx: 0.035, cy: 0.035, size: 1, numbers: true, poa: true,
-                  ring: true, which: "all" };
+const OVL_DEF = { size: 1, numbers: true, poa: true, ring: true, which: "all",
+                  zoom: 1, px: 0.5, py: 0.5 };
 
 /* Fields the card can carry. Kept small on purpose: a card with everything on
    it is a table, and a table beside a photograph is not what anyone reads. */
@@ -6279,7 +6717,20 @@ ACT["tgt-overlay"] = async (id) => {
     target: t, groups: gs, bmp,
     rows: (t.overlay && t.overlay.rows) || ["group", "mr", "shots", "dist"],
   });
+  /* One card per group rather than one card for the target. A card belongs
+     beside the holes it describes: with several points of aim on one page, a
+     single panel makes the reader match numbers to groups by guesswork. */
+  OVL.cards = Object.assign({}, (t.overlay && t.overlay.cards) || {});
+  gs.forEach((g, i) => {
+    if (!OVL.cards[g.id]) {
+      const p = g.poa || [0.5, 0.5];
+      /* Start above the group it belongs to, nudged so several do not stack. */
+      OVL.cards[g.id] = { x: Math.max(0.02, Math.min(0.55, p[0] - 0.22)),
+                          y: Math.max(0.02, Math.min(0.8, p[1] - 0.26 + i * 0.01)) };
+    }
+  });
   OVL.view = null;
+  OVL.boxes = {};
   closeSheet();
   ovlLayer().classList.add("on");
   ovlFit();
@@ -6299,6 +6750,7 @@ function ovlLayer() {
     <div class="markzoom">
       <button data-ovl="bigger" aria-label="Bigger card">A+</button>
       <button data-ovl="smaller" aria-label="Smaller card">A-</button>
+      <button data-ovl="reset" aria-label="Fit the photograph">\u2723</button>
     </div>
     <div class="markbar">
       <button class="btn" data-ovl="close">Close</button>
@@ -6335,10 +6787,14 @@ function ovlFit() {
   const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
-  const s = Math.min(cv.width / OVL.bmp.width, cv.height / OVL.bmp.height);
+  const fit = Math.min(cv.width / OVL.bmp.width, cv.height / OVL.bmp.height);
+  OVL.fitScale = fit;
+  const s = fit * (OVL.zoom || 1);
+  /* px, py is the point of the photograph held at the centre of the canvas, so
+     zooming keeps what you were looking at where it was. */
   OVL.view = { scale: s,
-    ox: (cv.width - OVL.bmp.width * s) / 2,
-    oy: (cv.height - OVL.bmp.height * s) / 2 };
+    ox: cv.width / 2 - OVL.px * OVL.bmp.width * s,
+    oy: cv.height / 2 - OVL.py * OVL.bmp.height * s };
 
   const sel = $("#ovlwhich");
   if (sel) {
@@ -6425,17 +6881,22 @@ function ovlDraw(g, o) {
     });
   });
 
-  ovlCard(g, o, unit);
+  ovlCards(g, o, unit);
 }
 
 /* The card. Measured first, then drawn, so the panel is exactly as big as its
    contents at whatever scale it is being drawn. */
-function ovlCard(g, o, unit) {
+function ovlCards(g, o, unit) {
   const t = OVL.target;
-  const groups = ovlShown();
-  const lines = ovlLines(groups, t);
-  if (!lines.length) return;
+  OVL.boxes = {};
+  ovlShown().forEach((grp) => {
+    const line = ovlLines([grp], t)[0];
+    if (line) ovlCard(g, o, unit, grp, line);
+  });
+}
 
+function ovlCard(g, o, unit, grp, line) {
+  const lines = [line];
   const k = unit * OVL.size;
   const pad = 14 * k;
   const titleSize = 16 * k, rowSize = 14 * k, gap = 7 * k;
@@ -6455,10 +6916,11 @@ function ovlCard(g, o, unit) {
   const boxH = pad * 2 + rows * (rowSize + gap) + (lines.length - 1) * gap;
 
   /* Keep it on the picture however far it is dragged. */
+  const pos = OVL.cards[grp.id] || { x: 0.03, y: 0.03 };
   const maxX = o.w - boxW, maxY = o.h - boxH;
-  const x = Math.max(0, Math.min(maxX, OVL.cx * o.w));
-  const y = Math.max(0, Math.min(maxY, OVL.cy * o.h));
-  OVL.box = { x, y, w: boxW, h: boxH };
+  const x = Math.max(0, Math.min(maxX, pos.x * o.w));
+  const y = Math.max(0, Math.min(maxY, pos.y * o.h));
+  OVL.boxes[grp.id] = { x, y, w: boxW, h: boxH };
 
   g.fillStyle = "rgba(12,14,16,0.82)";
   g.strokeStyle = "rgba(233,180,76,0.55)";
@@ -6528,41 +6990,118 @@ function ovlPaint() {
 
 /* --------------------------------------------------------------- dragging */
 let OVLDRAG = null;
+let OVLP = [];
+let OVLPINCH = null;
 
-function ovlDown(ev) {
-  if (!OVL || !OVL.box) return;
-  const cv = ev.currentTarget;
+const ovlXY = (cv, ev) => {
   const r = cv.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
-  const b = OVL.box;
-  if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) return;
-  cv.setPointerCapture(ev.pointerId);
-  OVLDRAG = { id: ev.pointerId, dx: x - b.x, dy: y - b.y };
+  return { x: (ev.clientX - r.left) * dpr, y: (ev.clientY - r.top) * dpr };
+};
+
+/* Which card, if any, is under a point. Topmost wins, which is the last drawn,
+   so the search runs backwards. */
+function ovlHit(x, y) {
+  const ids = Object.keys(OVL.boxes || {});
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const b = OVL.boxes[ids[i]];
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return ids[i];
+  }
+  return null;
+}
+
+function ovlDown(ev) {
+  if (!OVL) return;
+  const cv = ev.currentTarget;
+  const p = ovlXY(cv, ev);
+  OVLP.push({ id: ev.pointerId, x: p.x, y: p.y });
+  if (OVLP.length === 2) {
+    /* A second finger always means the photograph, never a card. Drop any
+       card drag in progress so a pinch cannot drag one along with it. */
+    OVLDRAG = null;
+    OVLPINCH = ovlPinch();
+    return;
+  }
+  const id = ovlHit(p.x, p.y);
+  if (id) {
+    cv.setPointerCapture(ev.pointerId);
+    const b = OVL.boxes[id];
+    OVLDRAG = { id: ev.pointerId, card: id, dx: p.x - b.x, dy: p.y - b.y };
+  }
+}
+
+function ovlPinch() {
+  const [a, b] = OVLP;
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: OVL.zoom || 1,
+    mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+    px: OVL.px, py: OVL.py, scale: OVL.view.scale, ox: OVL.view.ox, oy: OVL.view.oy };
 }
 
 function ovlMove(ev) {
-  if (!OVLDRAG || OVLDRAG.id !== ev.pointerId) return;
+  if (!OVL) return;
   const cv = ev.currentTarget;
-  const r = cv.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
-  OVL.cx = (x - OVLDRAG.dx) / cv.width;
-  OVL.cy = (y - OVLDRAG.dy) / cv.height;
-  ovlPaint();
+  const p = ovlXY(cv, ev);
+  const me = OVLP.find((q) => q.id === ev.pointerId);
+  if (me) { me.x = p.x; me.y = p.y; }
+
+  if (OVLP.length >= 2 && OVLPINCH) {
+    const [a, b] = OVLP;
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (OVLPINCH.dist > 4) {
+      const z = Math.max(1, Math.min(12, OVLPINCH.zoom * (d / OVLPINCH.dist)));
+      /* Hold the point that was under the pinch centre where it was. */
+      const s0 = OVLPINCH.scale, s1 = OVL.fitScale * z;
+      const imgX = (OVLPINCH.mx - OVLPINCH.ox) / s0;
+      const imgY = (OVLPINCH.my - OVLPINCH.oy) / s0;
+      const ox = OVLPINCH.mx - imgX * s1, oy = OVLPINCH.my - imgY * s1;
+      OVL.zoom = z;
+      OVL.px = (cv.width / 2 - ox) / (OVL.bmp.width * s1);
+      OVL.py = (cv.height / 2 - oy) / (OVL.bmp.height * s1);
+      ovlFit();
+      ovlPaint();
+    }
+    return;
+  }
+
+  if (OVLDRAG && OVLDRAG.id === ev.pointerId) {
+    OVL.cards[OVLDRAG.card] = { x: (p.x - OVLDRAG.dx) / cv.width,
+                                y: (p.y - OVLDRAG.dy) / cv.height };
+    ovlPaint();
+    return;
+  }
+
+  /* One finger, not on a card: pan the photograph. */
+  if (OVLP.length === 1 && me && OVL.zoom > 1.001) {
+    const s = OVL.view.scale;
+    OVL.px -= (p.x - (me.lx == null ? p.x : me.lx)) / (OVL.bmp.width * s);
+    OVL.py -= (p.y - (me.ly == null ? p.y : me.ly)) / (OVL.bmp.height * s);
+    OVL.px = Math.max(0, Math.min(1, OVL.px));
+    OVL.py = Math.max(0, Math.min(1, OVL.py));
+    ovlFit(); ovlPaint();
+  }
+  if (me) { me.lx = p.x; me.ly = p.y; }
 }
 
 function ovlUp(ev) {
-  if (!OVLDRAG) return;
   try { ev.currentTarget.releasePointerCapture(ev.pointerId); } catch (e) {}
-  OVLDRAG = null;
+  OVLP = OVLP.filter((q) => q.id !== ev.pointerId);
+  OVLP.forEach((q) => { q.lx = null; q.ly = null; });
+  OVLPINCH = OVLP.length === 2 ? ovlPinch() : null;
+  if (OVLDRAG && OVLDRAG.id === ev.pointerId) OVLDRAG = null;
 }
+
+ACT["tgt-ovl-reset"] = () => {
+  if (!OVL) return;
+  OVL.zoom = 1; OVL.px = 0.5; OVL.py = 0.5;
+  ovlFit(); ovlPaint();
+};
 
 /* ---------------------------------------------------------------- actions */
 function ovlAct(what) {
   if (!OVL) return;
   if (what === "bigger") { OVL.size = Math.min(2.2, OVL.size * 1.18); ovlPaint(); return; }
   if (what === "smaller") { OVL.size = Math.max(0.5, OVL.size / 1.18); ovlPaint(); return; }
+  if (what === "reset") { ACT["tgt-ovl-reset"](); return; }
   if (what === "fields") { ovlFields(); return; }
   if (what === "share") { ovlShare(); return; }
   if (what === "close") {
@@ -6580,7 +7119,7 @@ function ovlRemember() {
   if (!OVL) return;
   const t = targetOf(OVL.target.id);
   if (!t) return;
-  const want = { cx: OVL.cx, cy: OVL.cy, size: OVL.size, rows: OVL.rows,
+  const want = { cards: OVL.cards, size: OVL.size, rows: OVL.rows,
                  numbers: OVL.numbers, poa: OVL.poa, ring: OVL.ring };
   if (JSON.stringify(t.overlay || {}) === JSON.stringify(want)) return;
   t.overlay = want;
@@ -6628,6 +7167,8 @@ async function ovlImage() {
   const cv = document.createElement("canvas");
   cv.width = bmp.width; cv.height = bmp.height;
   const g = cv.getContext("2d");
+  /* Always the whole photograph, whatever the screen happens to be zoomed to:
+     zoom is for placing cards accurately, not for cropping. */
   ovlDraw(g, { w: cv.width, h: cv.height, scale: 1, ox: 0, oy: 0 });
   /* Drawing for export moved OVL.box into export coordinates; put the screen
      one back so the next drag still lines up with what is on screen. */
