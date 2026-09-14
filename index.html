@@ -3647,7 +3647,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-af658b";
+const APP_VERSION = "2026.09.14-7759a5";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -5277,6 +5277,10 @@ const TGT_STEPS = {
     hint: "Both ends of a distance you know. Use the longest one on the target \u2014 six inches is far better than one.",
   },
   poa: { head: "Point of aim", hint: "Where you were aiming, not where the group landed." },
+  flags: {
+    head: "Pulled shots and cold bores",
+    hint: "Tap a shot, then tag it. Tapping the same tag again puts it back to an ordinary shot.",
+  },
   measure: {
     head: "Check the scale",
     hint: "Mark both ends of something you can measure with a ruler. The app will say what it thinks that distance is.",
@@ -5592,9 +5596,9 @@ function markLayer() {
       <button data-id="out" aria-label="Zoom out">&minus;</button>
     </div>
     <div class="markflags" id="markflags">
-      <button class="btn pulled" data-mact="tgt-flag" data-id="pulled">Pulled</button>
-      <button class="btn cold" data-mact="tgt-flag" data-id="cold">Cold bore</button>
-      <button class="btn" data-mact="tgt-pick">Select nearest</button>
+      <button class="btn pulled" data-mact="tgt-flag" data-id="pulled" id="fl-pulled">Pulled</button>
+      <button class="btn cold" data-mact="tgt-flag" data-id="cold" id="fl-cold">Cold bore</button>
+      <button class="btn" data-mact="tgt-pick" id="fl-pick">Select nearest</button>
     </div>
     <div class="markbar">
       <span class="mb-l">
@@ -5602,11 +5606,11 @@ function markLayer() {
         <button class="btn" data-mact="tgt-undo" id="markundo">Undo</button>
       </span>
       <span class="mb-c">
-        <button class="btn pri" data-mact="tgt-confirm" id="markok">Confirm</button>
+        <button class="btn" data-mact="tgt-skip" id="markskip">Done</button>
         <span class="grow" id="markcount"></span>
       </span>
       <span class="mb-r">
-        <button class="btn" data-mact="tgt-skip" id="markskip">Done</button>
+        <button class="btn pri" data-mact="tgt-confirm" id="markok">Confirm</button>
       </span>
     </div>`;
   document.body.appendChild(el);
@@ -5778,9 +5782,16 @@ function markPaint() {
       }
       g.strokeStyle = col; g.lineWidth = 1.75 * dpr;
       g.beginPath(); g.arc(p.x, p.y, rr2, 0, 7); g.stroke();
+      /* The number sits inside the ring rather than beside it. Alongside, the
+         labels collided with each other and with neighbouring holes as soon as
+         a group got tight, which is exactly when you want to read them. */
+      g.font = `600 ${Math.max(9 * dpr, rr2 * 1.05)}px ui-sans-serif, system-ui`;
+      g.textAlign = "center"; g.textBaseline = "middle";
+      g.lineWidth = 3 * dpr; g.strokeStyle = "rgba(0,0,0,0.7)";
+      g.strokeText(String(i + 1), p.x, p.y);
       g.fillStyle = col;
-      g.font = `${11 * dpr}px ui-sans-serif, system-ui`;
-      g.fillText(String(i + 1), p.x + rr2 + 3 * dpr, p.y - 3 * dpr);
+      g.fillText(String(i + 1), p.x, p.y);
+      g.textAlign = "start"; g.textBaseline = "alphabetic";
     });
   }
 
@@ -5788,6 +5799,7 @@ function markPaint() {
      printed gridlines and over bullet holes in black paper, and lime is the
      one colour that reads against both. A placed mark changes colour so that
      what is done and what is being placed can never be confused. */
+  if (TGT.step === "flags") { markChrome(); return; }
   const calibrating = TGT.step === "calH" || TGT.step === "measure";
   const reticle = "#32FF32";
   const cx = cv.width / 2, cy = cv.height / 2;
@@ -5822,18 +5834,27 @@ function markChrome() {
   if (back) back.textContent = (step === "calH" && !(TGT.marks || []).length) ? "Cancel" : "Back";
   const flags = el.querySelector("#markflags");
   const ok = el.querySelector("#markok");
-  /* The flag row only belongs on the impacts step, and only once there is a
-     shot to attach a flag to. */
   const nImp = (cur && cur.impacts) ? cur.impacts.length : 0;
-  if (flags) flags.hidden = !(step === "impacts" && nImp);
-  if (flags && !flags.hidden) {
-    const sel = TGT.sel == null ? nImp - 1 : TGT.sel;
-    const f = flagOf(cur, sel);
-    flags.querySelectorAll("[data-id]").forEach((b) => {
-      b.classList.toggle("on", b.dataset.id === f);
-    });
-    const pick = flags.querySelector('[data-mact="tgt-pick"]');
-    if (pick) pick.textContent = TGT.sel == null ? "Select nearest" : `Shot ${TGT.sel + 1} selected`;
+  const pulled = el.querySelector("#fl-pulled");
+  const cold = el.querySelector("#fl-cold");
+  const pick = el.querySelector("#fl-pick");
+
+  /* Marking holes and deciding which of them was a pulled shot are separate
+     jobs, and mixing them put two more buttons under your thumb at the moment
+     you least wanted them. Flags live in their own pass over the photograph,
+     reached from the results screen. */
+  const flagging = step === "flags";
+  if (flags) flags.hidden = !((step === "impacts" && nImp) || flagging);
+  if (pulled) pulled.hidden = !flagging;
+  if (cold) cold.hidden = !flagging;
+  if (pick) pick.hidden = flagging;
+
+  if (flagging) {
+    const f = flagOf(cur, TGT.sel);
+    if (pulled) pulled.classList.toggle("on", f === "pulled");
+    if (cold) cold.classList.toggle("on", f === "cold");
+  } else if (pick) {
+    pick.textContent = TGT.sel == null ? "Select nearest" : `Shot ${TGT.sel + 1} selected`;
   }
   if (ok) ok.textContent = (step === "impacts" && TGT.sel != null) ? "Move here" : "Confirm";
 
@@ -5852,12 +5873,19 @@ function markChrome() {
     count.textContent = "aim point";
     skip.hidden = true;
     undo.hidden = true;
+  } else if (step === "flags") {
+    count.textContent = TGT.sel == null ? "tap a shot" : `shot ${TGT.sel + 1}`;
+    skip.hidden = false;
+    skip.textContent = "Save";
+    undo.hidden = true;
+    if (ok) ok.hidden = true;
   } else {
     const n0 = ((cur && cur.impacts) || []).length;
     count.textContent = n0 ? `${n0} marked` : "no impacts yet";
     skip.hidden = false;
     skip.textContent = TGT.editing ? "Save" : "Done";
     undo.hidden = !n0 || TGT.sel != null;
+    if (ok) ok.hidden = false;
   }
 }
 
@@ -5865,8 +5893,32 @@ function markChrome() {
 function markDown(ev) {
   const cv = ev.currentTarget;
   cv.setPointerCapture(ev.pointerId);
-  MARKP.push({ id: ev.pointerId, x: ev.clientX, y: ev.clientY });
+  MARKP.push({ id: ev.pointerId, x: ev.clientX, y: ev.clientY,
+               x0: ev.clientX, y0: ev.clientY });
   if (MARKP.length === 2) MARKPINCH = pinchState();
+}
+
+/* A tap, as opposed to a drag: moved less than a thumb's worth of slop. On the
+   flag pass there is nothing being placed, so a tap can mean "that one" without
+   any ambiguity against panning. */
+function markTap(ev, p) {
+  if (!p || Math.hypot(ev.clientX - p.x0, ev.clientY - p.y0) > 8) return;
+  if (TGT.step !== "flags" || !TGT.current) return;
+  const cv = ev.currentTarget;
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
+  let best = null, bestD = Infinity;
+  (TGT.current.impacts || []).forEach((m, i) => {
+    const s = markToScreen(m);
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  /* Generously sized: a fingertip is wider than a bullet hole, and the nearest
+     mark is nearly always the intended one. */
+  const reach = Math.max(28 * dpr, markReticlePx());
+  TGT.sel = (best != null && bestD <= reach) ? best : null;
+  markPaint();
 }
 
 function pinchState() {
@@ -5909,6 +5961,8 @@ function markMove(ev) {
 function markUp(ev) {
   const cv = ev.currentTarget;
   try { cv.releasePointerCapture(ev.pointerId); } catch (e) {}
+  const me = MARKP.find((q) => q.id === ev.pointerId);
+  if (MARKP.length === 1) markTap(ev, me);
   MARKP = MARKP.filter((q) => q.id !== ev.pointerId);
   /* Coming out of a pinch, whichever finger is still down becomes the pan
      finger. Its recorded position is from the pinch, so without reseeding it
@@ -5992,7 +6046,8 @@ ACT["tgt-flag"] = (which) => {
   if (!TGT || !TGT.current) return;
   const imps = TGT.current.impacts || [];
   if (!imps.length) return;
-  const i = TGT.sel == null ? imps.length - 1 : TGT.sel;
+  if (TGT.sel == null) { toast("Tap a shot first."); return; }
+  const i = TGT.sel;
   TGT.current.flags = TGT.current.flags || {};
   const key = String(i);
   if (TGT.current.flags[key] === which) delete TGT.current.flags[key];
@@ -6005,6 +6060,14 @@ ACT["tgt-flag"] = (which) => {
 ACT["tgt-back"] = () => {
   if (!TGT) return;
   const step = TGT.step;
+
+  if (step === "flags") {
+    const tid = TGT.target.id, keep = TGT.bmp;
+    markClose();
+    TGT = { target: targetOf(tid), committed: true, groups: [], current: null, bmp: keep };
+    targetSheet(tid);
+    return;
+  }
 
   if (step === "measure") {
     const id = TGT.target.id;
@@ -6071,6 +6134,7 @@ ACT["tgt-cancel"] = () => {
 
 ACT["tgt-skip"] = () => {
   if (!TGT) return;
+  if (TGT.step === "flags") { flagsDone(); return; }
   if (TGT.step !== "impacts") return;
   if (TGT.editing) { editDone(); return; }
   groupDone();
@@ -6362,6 +6426,42 @@ ACT["tgt-done"] = () => {
   render();
 };
 
+/* --------------------------------------------------------------- flags */
+/* A separate pass over the photograph for tagging shots. Deliberately not part
+   of marking: deciding a shot was pulled is a judgement made after looking at
+   where they all went, not while you are still placing holes, and putting it in
+   the marking bar meant two extra buttons under your thumb at the worst moment. */
+ACT["tgt-flags"] = async (gid) => {
+  const g = byId(S.groups || [], gid);
+  if (!g) return;
+  const t = targetOf(g.targetId);
+  if (!t) return;
+  const bmp = await targetBitmap(t);
+  if (!bmp) { toast("The photograph is not on this device."); return; }
+  TGT = {
+    target: t, committed: true, flagging: gid, groups: [], bmp, marks: [], fitted: false,
+    current: JSON.parse(JSON.stringify(g)), sel: null,
+  };
+  closeSheet();
+  targetStep("flags");
+};
+
+function flagsDone() {
+  const g = byId(S.groups || [], TGT.flagging);
+  if (!g) { TGT = null; markClose(); render(); return; }
+  const want = TGT.current.flags || {};
+  if (JSON.stringify(g.flags || {}) !== JSON.stringify(want)) {
+    snapshot("tag shots");
+    g.flags = want;
+    save();
+    render();
+  }
+  const tid = g.targetId, keep = TGT.bmp;
+  markClose();
+  TGT = { target: targetOf(tid), committed: true, groups: [], current: null, bmp: keep };
+  targetSheet(tid);
+}
+
 /* -------------------------------------------------------------- editing */
 /* Reopen a committed group for marking. A misplaced hole used to be permanent
    once Done was pressed, which for a twenty-shot string is a lot to lose over
@@ -6543,6 +6643,7 @@ function targetSheet(id) {
     h += s ? groupNums(s, t) : `<div class="empty"><b>No impacts marked</b></div>`;
     h += `<span class="btnrow" style="margin-top:8px">
       <button class="btn sm" data-act="tgt-edit" data-id="${esc(g.id)}">Edit impacts</button>
+      <button class="btn sm" data-act="tgt-flags" data-id="${esc(g.id)}">Mark pulled / cold bore</button>
       <button class="btn sm dgr" data-act="tgt-gdel" data-id="${esc(g.id)}">Delete group</button>
       </span></section>`;
   });
@@ -6819,7 +6920,19 @@ function ovlDraw(g, o) {
   const { bmp, target: t } = OVL;
   const sc = o.scale, ox = o.ox, oy = o.oy;
   const W = bmp.width * sc;
+  /* Two different units, and the distinction is the whole of the fix.
+
+     Markers live on the photograph: a ring around a hole has to grow when the
+     photograph is zoomed, or it stops being around the hole.
+
+     The cards do not. They are a caption laid over the picture, and a caption
+     that swells and slides every time you pinch is unusable — you zoom in to
+     place a card precisely and it grows out from under you. So the card is
+     measured against the canvas, which does not change when the photograph is
+     panned or zoomed. On export the two coincide, because the drawing is made
+     at the photograph's own size. */
   const unit = W / 1000;                    // one thousandth of the image width
+  const cardUnit = o.w / 1000;              // one thousandth of the surface
 
   g.fillStyle = "#0B0C0D";
   g.fillRect(0, 0, o.w, o.h);
@@ -6865,23 +6978,28 @@ function ovlDraw(g, o) {
     (grp.impacts || []).forEach((m, i) => {
       const p = pt(m);
       const out = skip.indexOf(i) > -1;
-      g.strokeStyle = out ? "rgba(190,80,70,0.9)" : "#32FF32";
+      const f = flagOf(grp, i);
+      g.strokeStyle = out ? "rgba(150,145,138,0.85)"
+        : (f ? SHOT_FLAGS[f].colour : "#32FF32");
       g.lineWidth = 2.2 * unit;
       g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.stroke();
       if (OVL.numbers) {
-        g.font = `600 ${13 * unit}px ui-sans-serif, system-ui, sans-serif`;
-        g.textBaseline = "middle";
+        /* Inside the ring, not beside it: alongside, the labels ran into each
+           other and into neighbouring holes exactly when the group was tight
+           enough to be worth photographing. */
+        g.font = `600 ${Math.max(9 * unit, r * 1.05)}px ui-sans-serif, system-ui, sans-serif`;
+        g.textAlign = "center"; g.textBaseline = "middle";
         const lbl = String(i + 1);
-        const lx = p.x + r + 4 * unit, ly = p.y - r - 2 * unit;
-        g.lineWidth = 3 * unit; g.strokeStyle = "rgba(0,0,0,0.75)";
-        g.strokeText(lbl, lx, ly);
-        g.fillStyle = out ? "#E08B80" : "#32FF32";
-        g.fillText(lbl, lx, ly);
+        g.lineWidth = 3 * unit; g.strokeStyle = "rgba(0,0,0,0.7)";
+        g.strokeText(lbl, p.x, p.y);
+        g.fillStyle = out ? "#E08B80" : (f ? SHOT_FLAGS[f].colour : "#32FF32");
+        g.fillText(lbl, p.x, p.y);
+        g.textAlign = "start"; g.textBaseline = "alphabetic";
       }
     });
   });
 
-  ovlCards(g, o, unit);
+  ovlCards(g, o, cardUnit);
 }
 
 /* The card. Measured first, then drawn, so the panel is exactly as big as its
