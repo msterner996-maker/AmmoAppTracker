@@ -3647,7 +3647,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-7759a5";
+const APP_VERSION = "2026.09.14-87ddf4";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -5285,7 +5285,10 @@ const TGT_STEPS = {
     head: "Check the scale",
     hint: "Mark both ends of something you can measure with a ruler. The app will say what it thinks that distance is.",
   },
-  impacts: { head: "Impacts", hint: "Centre of each hole. Zoom in; the reticle is the size of the bullet." },
+  impacts: {
+    head: "Impacts",
+    hint: "Centre of each hole. Zoom in; the reticle is the size of the bullet. Tap a marked shot to move or delete it.",
+  },
 };
 
 /* ------------------------------------------------------------- the screen */
@@ -5844,18 +5847,19 @@ function markChrome() {
      you least wanted them. Flags live in their own pass over the photograph,
      reached from the results screen. */
   const flagging = step === "flags";
-  if (flags) flags.hidden = !((step === "impacts" && nImp) || flagging);
-  if (pulled) pulled.hidden = !flagging;
-  if (cold) cold.hidden = !flagging;
-  if (pick) pick.hidden = flagging;
+  /* Nothing but the flag pass gets this row. Calibrating, placing the aim point
+     and marking holes each want one decision under the thumb, not four. */
+  if (flags) flags.hidden = !flagging;
+  if (pulled) pulled.hidden = false;
+  if (cold) cold.hidden = false;
+  if (pick) pick.hidden = true;
 
   if (flagging) {
     const f = flagOf(cur, TGT.sel);
     if (pulled) pulled.classList.toggle("on", f === "pulled");
     if (cold) cold.classList.toggle("on", f === "cold");
-  } else if (pick) {
-    pick.textContent = TGT.sel == null ? "Select nearest" : `Shot ${TGT.sel + 1} selected`;
   }
+  void nImp;
   if (ok) ok.textContent = (step === "impacts" && TGT.sel != null) ? "Move here" : "Confirm";
 
   if (step === "measure") {
@@ -5903,7 +5907,11 @@ function markDown(ev) {
    any ambiguity against panning. */
 function markTap(ev, p) {
   if (!p || Math.hypot(ev.clientX - p.x0, ev.clientY - p.y0) > 8) return;
-  if (TGT.step !== "flags" || !TGT.current) return;
+  /* Tapping picks a shot on either pass. On the impacts pass that replaces the
+     Select nearest button: a tap is unambiguous against a drag, and it is one
+     fewer thing in the bar. */
+  if (!TGT.current) return;
+  if (TGT.step !== "flags" && TGT.step !== "impacts") return;
   const cv = ev.currentTarget;
   const r = cv.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -5917,7 +5925,10 @@ function markTap(ev, p) {
   /* Generously sized: a fingertip is wider than a bullet hole, and the nearest
      mark is nearly always the intended one. */
   const reach = Math.max(28 * dpr, markReticlePx());
-  TGT.sel = (best != null && bestD <= reach) ? best : null;
+  const hit = (best != null && bestD <= reach) ? best : null;
+  /* Tapping the shot that is already selected lets it go, so a mis-tap is one
+     tap to undo rather than something to hunt for. */
+  TGT.sel = (hit != null && hit === TGT.sel) ? null : hit;
   markPaint();
 }
 
@@ -6798,11 +6809,10 @@ const OVL_DEF = { size: 1, numbers: true, poa: true, ring: true, which: "all",
 /* Fields the card can carry. Kept small on purpose: a card with everything on
    it is a table, and a table beside a photograph is not what anyone reads. */
 const OVL_ROWS = [
-  { k: "group", label: "Group" },
+  { k: "group", label: "Group size" },
+  { k: "wh", label: "Width \u00d7 height" },
+  { k: "atz", label: "Adjust to zero" },
   { k: "mr", label: "Mean radius" },
-  { k: "shots", label: "Shots" },
-  { k: "dist", label: "Distance" },
-  { k: "zero", label: "Zero" },
   { k: "r50", label: "R50" },
 ];
 
@@ -6816,7 +6826,7 @@ ACT["tgt-overlay"] = async (id) => {
 
   OVL = Object.assign({}, OVL_DEF, t.overlay || {}, {
     target: t, groups: gs, bmp,
-    rows: (t.overlay && t.overlay.rows) || ["group", "mr", "shots", "dist"],
+    rows: (t.overlay && t.overlay.rows) || ["group", "wh", "atz", "mr"],
   });
   /* One card per group rather than one card for the target. A card belongs
      beside the holes it describes: with several points of aim on one page, a
@@ -6825,9 +6835,12 @@ ACT["tgt-overlay"] = async (id) => {
   gs.forEach((g, i) => {
     if (!OVL.cards[g.id]) {
       const p = g.poa || [0.5, 0.5];
-      /* Start above the group it belongs to, nudged so several do not stack. */
-      OVL.cards[g.id] = { x: Math.max(0.02, Math.min(0.55, p[0] - 0.22)),
-                          y: Math.max(0.02, Math.min(0.8, p[1] - 0.26 + i * 0.01)) };
+      /* Start above the group it belongs to, nudged so several do not stack.
+         Stored as a fraction of the photograph, not of the screen: a caption
+         belongs to the holes it describes, so panning and zooming have to carry
+         it along rather than leave it hanging over whatever scrolls underneath. */
+      OVL.cards[g.id] = { x: Math.max(0.01, Math.min(0.6, p[0] - 0.22)),
+                          y: Math.max(0.01, Math.min(0.8, p[1] - 0.26 + i * 0.01)) };
     }
   });
   OVL.view = null;
@@ -7014,36 +7027,43 @@ function ovlCards(g, o, unit) {
 }
 
 function ovlCard(g, o, unit, grp, line) {
-  const lines = [line];
   const k = unit * OVL.size;
-  const pad = 14 * k;
-  const titleSize = 16 * k, rowSize = 14 * k, gap = 7 * k;
+  const pad = 15 * k;
+  const head = 14 * k, sub = 13 * k, row = 14 * k;
+  const gap = 6 * k, split = 10 * k;
 
-  g.font = `600 ${titleSize}px ui-sans-serif, system-ui, sans-serif`;
-  let wide = g.measureText(lines[0].title).width;
-  g.font = `${rowSize}px ui-monospace, SFMono-Regular, monospace`;
-  lines.forEach((l) => {
-    (l.rows || []).forEach((r) => {
-      wide = Math.max(wide, g.measureText(r[0] + "   " + r[1]).width);
-    });
+  /* Measured before it is drawn, so the panel is exactly as wide as its widest
+     line at whatever scale it is being drawn at. */
+  const meas = (txt, size, bold) => {
+    g.font = `${bold ? "600 " : ""}${size}px ui-sans-serif, system-ui, sans-serif`;
+    return g.measureText(txt).width;
+  };
+  let wide = 0, high = pad * 2;
+  line.head.forEach((h, i) => {
+    wide = Math.max(wide, meas(h.text, i === 0 ? head : sub, !!h.bold));
+    high += (i === 0 ? head : sub) + gap;
   });
+  high += split;
+  line.data.forEach((d) => {
+    wide = Math.max(wide, meas(d.text, row, !!d.bold));
+    high += row + gap;
+  });
+  high -= gap;
 
-  let rows = 0;
-  lines.forEach((l) => { rows += 1 + (l.rows || []).length; });
-  const boxW = wide + pad * 2;
-  const boxH = pad * 2 + rows * (rowSize + gap) + (lines.length - 1) * gap;
+  const boxW = wide + pad * 2, boxH = high;
 
-  /* Keep it on the picture however far it is dragged. */
   const pos = OVL.cards[grp.id] || { x: 0.03, y: 0.03 };
-  const maxX = o.w - boxW, maxY = o.h - boxH;
-  const x = Math.max(0, Math.min(maxX, pos.x * o.w));
-  const y = Math.max(0, Math.min(maxY, pos.y * o.h));
+  const iw = OVL.bmp.width * o.scale, ih = OVL.bmp.height * o.scale;
+  const fx = Math.max(0, Math.min(1 - boxW / iw, pos.x));
+  const fy = Math.max(0, Math.min(1 - boxH / ih, pos.y));
+  const x = o.ox + fx * iw;
+  const y = o.oy + fy * ih;
   OVL.boxes[grp.id] = { x, y, w: boxW, h: boxH };
 
-  g.fillStyle = "rgba(12,14,16,0.82)";
-  g.strokeStyle = "rgba(233,180,76,0.55)";
-  g.lineWidth = 1.4 * k;
-  const rr = 10 * k;
+  g.fillStyle = "rgba(24,27,32,0.80)";
+  g.strokeStyle = "rgba(255,255,255,0.22)";
+  g.lineWidth = 1.2 * k;
+  const rr = 9 * k;
   g.beginPath();
   g.moveTo(x + rr, y);
   g.arcTo(x + boxW, y, x + boxW, y + boxH, rr);
@@ -7053,47 +7073,103 @@ function ovlCard(g, o, unit, grp, line) {
   g.closePath();
   g.fill(); g.stroke();
 
-  let ty = y + pad + rowSize * 0.5;
+  /* Centred, which is what makes it read as a caption rather than a form. */
+  const mid = x + boxW / 2;
+  g.textAlign = "center";
   g.textBaseline = "middle";
-  lines.forEach((l, i) => {
-    if (i) ty += gap;
-    g.font = `600 ${titleSize}px ui-sans-serif, system-ui, sans-serif`;
-    g.fillStyle = "#E9B44C";
-    g.fillText(l.title, x + pad, ty);
-    ty += rowSize + gap;
-    g.font = `${rowSize}px ui-monospace, SFMono-Regular, monospace`;
-    (l.rows || []).forEach((r) => {
-      g.fillStyle = "#9A968E";
-      g.fillText(r[0], x + pad, ty);
-      g.fillStyle = "#EDEBE6";
-      const vw = g.measureText(r[1]).width;
-      g.fillText(r[1], x + pad + wide - vw, ty);
-      ty += rowSize + gap;
-    });
+  let ty = y + pad;
+
+  line.head.forEach((h, i) => {
+    const size = i === 0 ? head : sub;
+    ty += size / 2;
+    g.font = `${h.bold ? "600 " : ""}${size}px ui-sans-serif, system-ui, sans-serif`;
+    g.fillStyle = h.bold ? "#FFFFFF" : "#C9C5BD";
+    g.fillText(h.text, mid, ty);
+    ty += size / 2 + gap;
   });
+  ty += split;
+  line.data.forEach((d) => {
+    ty += row / 2;
+    g.font = `${d.bold ? "600 " : ""}${row}px ui-sans-serif, system-ui, sans-serif`;
+    g.fillStyle = d.bold ? "#FFFFFF" : "#C9C5BD";
+    g.fillText(d.text, mid, ty);
+    ty += row / 2 + gap;
+  });
+
+  g.textAlign = "start";
+  g.textBaseline = "alphabetic";
 }
 
+/* The angular figure that goes in brackets after a length. Minutes unless the
+   setting says mils, because a bracketed figure in the same unit as the one in
+   front of it says nothing. */
+function ovlAng(inches, t) {
+  const u = units();
+  if (u.size === "mil") {
+    const v = toMil(inches, t);
+    return v == null ? null : `${v.toFixed(3)} MIL`;
+  }
+  const v = toMoa(inches, t);
+  return v == null ? null : `${v.toFixed(3)} MOA`;
+}
+const ovlZeroUnit = () => {
+  const z = units().zero;
+  return z === "mil" ? "MIL" : z === "in" ? "IN" : z === "cm" ? "CM" : z === "mm" ? "MM" : "MOA";
+};
+function ovlZeroVal(inches, t) {
+  const z = units().zero;
+  const v = z === "mil" ? toMil(inches, t)
+    : z === "in" ? inches
+    : z === "cm" ? inches * 2.54
+    : z === "mm" ? inches * 25.4
+    : toMoa(inches, t);
+  return v == null ? "\u2014" : Math.abs(v).toFixed(2);
+}
+
+/* What each card says, top to bottom: who and when, then a gap, then the
+   numbers. The gap matters — without it the header and the data read as one
+   list and nothing stands out. */
 function ovlLines(groups, t) {
   const want = OVL.rows || [];
+  const all = groupsFor(t.id);
   return groups.map((grp) => {
     const s = gstats(t, grp);
     const f = gun(grp.firearmId), a = ammoOf(grp.ammoId);
-    const rows = [];
-    if (!s) return { title: f ? f.name : "Group", rows };
-    want.forEach((k) => {
-      if (k === "group") rows.push(["Group", showLen(s.es, t, "size")]);
-      if (k === "mr") rows.push(["Mean radius", showLen(s.mr, t, "size")]);
-      if (k === "shots") rows.push(["Shots", String(s.n)]);
-      if (k === "dist") rows.push(["Distance", `${fmt(t.distance)} ${t.distanceUnit || "yd"}`]);
-      if (k === "r50" && s.r50 != null) rows.push(["R50", showLen(s.r50, t, "size")]);
-      if (k === "zero" && s.zero) {
-        rows.push(["Windage", (s.zero.right >= 0 ? "R " : "L ") + showLen(Math.abs(s.zero.right), t, "zero")]);
-        rows.push(["Elevation", (s.zero.up >= 0 ? "U " : "D ") + showLen(Math.abs(s.zero.up), t, "zero")]);
-      }
-    });
-    const sub = [a ? ammoLabel(a) : null, dshow(t.date)].filter(Boolean).join("  \u00b7  ");
-    if (sub) rows.unshift(["", sub]);
-    return { title: f ? f.name : "Group", rows };
+    const poaNo = all.findIndex((x) => x.id === grp.id) + 1;
+
+    const head = [
+      { text: f ? f.name : "Firearm removed", bold: true },
+      { text: a ? ammoLabel(a) : "Load removed" },
+      { text: dshow(t.date) },
+      { text: `${fmt(t.distance)} ${t.distanceUnit === "m" ? "Metres" : "Yards"} / ${
+        s ? s.n : 0} Shot group` },
+      { text: `POA #${poaNo || 1}`, bold: true },
+    ];
+
+    const data = [];
+    if (!s) return { head, data };
+    const inch = (v) => `${v.toFixed(3)}\u2033`;
+    const paren = (v) => { const p = ovlAng(v, t); return p ? ` (${p})` : ""; };
+
+    if (want.indexOf("group") > -1) {
+      data.push({ text: `Group: ${inch(s.es)}${paren(s.es)}`, bold: true });
+    }
+    if (want.indexOf("wh") > -1) {
+      data.push({ text: `W/H: ${inch(s.width)} \u00d7 ${inch(s.height)}` });
+    }
+    if (want.indexOf("atz") > -1 && s.zero) {
+      const v = s.zero.up >= 0 ? "U" : "D";
+      const hz = s.zero.right >= 0 ? "R" : "L";
+      data.push({ text: `ATZ(${ovlZeroUnit()}): ${v}: ${ovlZeroVal(s.zero.up, t)}  ${
+        hz}: ${ovlZeroVal(s.zero.right, t)}` });
+    }
+    if (want.indexOf("mr") > -1) {
+      data.push({ text: `Mean Radius: ${inch(s.mr)}${paren(s.mr)}`, bold: true });
+    }
+    if (want.indexOf("r50") > -1 && s.r50 != null) {
+      data.push({ text: `R50: ${inch(s.r50)}${paren(s.r50)}` });
+    }
+    return { head, data };
   });
 }
 
@@ -7182,8 +7258,13 @@ function ovlMove(ev) {
   }
 
   if (OVLDRAG && OVLDRAG.id === ev.pointerId) {
-    OVL.cards[OVLDRAG.card] = { x: (p.x - OVLDRAG.dx) / cv.width,
-                                y: (p.y - OVLDRAG.dy) / cv.height };
+    /* Back out of screen coordinates into the photograph's, so the card stays
+       where it was put no matter what the view does afterwards. */
+    const v = OVL.view;
+    OVL.cards[OVLDRAG.card] = {
+      x: (p.x - OVLDRAG.dx - v.ox) / (OVL.bmp.width * v.scale),
+      y: (p.y - OVLDRAG.dy - v.oy) / (OVL.bmp.height * v.scale),
+    };
     ovlPaint();
     return;
   }
