@@ -3629,7 +3629,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-d34f22";
+const APP_VERSION = "2026.09.14-f548a0";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -5044,6 +5044,10 @@ const TGT_STEPS = {
     hint: "The same length, measured vertically. This removes the error an off-square photograph puts into the vertical.",
   },
   poa: { head: "Point of aim", hint: "Where you were aiming, not where the group landed." },
+  measure: {
+    head: "Check the scale",
+    hint: "Mark both ends of something you can measure with a ruler. The app will say what it thinks that distance is.",
+  },
   impacts: { head: "Impacts", hint: "Centre of each hole. Zoom in; the reticle is the size of the bullet." },
 };
 
@@ -5346,7 +5350,12 @@ function targetStep(step, back) {
   const spec = TGT_STEPS[step] || { head: "", hint: "" };
   el.querySelector("#markhead").textContent = spec.head;
   el.querySelector("#markhint").textContent = spec.hint;
-  markFit();
+  /* Only fit the photograph the first time it is shown. Refitting on every
+     step threw away the zoom you had just set up, which is precisely the work
+     that goes into placing a mark well: moving from the aim point to the
+     impacts should leave the view exactly where it was. */
+  markFit(!TGT.fitted);
+  TGT.fitted = true;
   markPaint();
 }
 
@@ -5356,12 +5365,17 @@ function markClose() {
 }
 
 /* Fit the photograph to the canvas the first time it is shown. */
-function markFit() {
+function markFit(force) {
   const cv = $("#markcv");
   if (!cv || !TGT || !TGT.bmp) return;
   const r = cv.getBoundingClientRect();
-  cv.width = Math.max(1, Math.round(r.width * (window.devicePixelRatio || 1)));
-  cv.height = Math.max(1, Math.round(r.height * (window.devicePixelRatio || 1)));
+  const w = Math.max(1, Math.round(r.width * (window.devicePixelRatio || 1)));
+  const h = Math.max(1, Math.round(r.height * (window.devicePixelRatio || 1)));
+  /* Setting width or height clears a canvas, so only touch them when they
+     actually change, or every repaint would flicker. */
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  if (!force && MARKV && MARKV.scale > 0) return;
   const s = Math.min(cv.width / TGT.bmp.width, cv.height / TGT.bmp.height);
   MARKV = {
     scale: s,
@@ -5411,17 +5425,17 @@ function markPaint() {
   /* Calibration marks, and the line between a pair. */
   (TGT.marks || []).forEach((m) => {
     const p = markToScreen(m);
-    g.strokeStyle = "#E9B44C"; g.lineWidth = 2 * dpr;
+    g.strokeStyle = "#32FF32"; g.lineWidth = 2 * dpr;
     g.beginPath(); g.moveTo(p.x - 9 * dpr, p.y); g.lineTo(p.x - 2.5 * dpr, p.y);
     g.moveTo(p.x + 2.5 * dpr, p.y); g.lineTo(p.x + 9 * dpr, p.y);
     g.moveTo(p.x, p.y - 9 * dpr); g.lineTo(p.x, p.y - 2.5 * dpr);
     g.moveTo(p.x, p.y + 2.5 * dpr); g.lineTo(p.x, p.y + 9 * dpr); g.stroke();
-    g.fillStyle = "#E9B44C";
+    g.fillStyle = "#32FF32";
     g.beginPath(); g.arc(p.x, p.y, 1.25 * dpr, 0, 7); g.fill();
   });
   if ((TGT.marks || []).length === 2) {
     const a = markToScreen(TGT.marks[0]), b = markToScreen(TGT.marks[1]);
-    g.strokeStyle = "rgba(233,180,76,0.7)"; g.lineWidth = 1.5 * dpr;
+    g.strokeStyle = "rgba(50,255,50,0.75)"; g.lineWidth = 1.5 * dpr;
     g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
   }
 
@@ -5449,10 +5463,14 @@ function markPaint() {
     });
   }
 
-  /* The reticle, last, so nothing covers it. */
+  /* The reticle, last, so nothing covers it. Lime while calibrating, because
+     it is being laid over a printed gridline rather than a hole and red on
+     black ink is the hardest pairing to judge. */
+  const calibrating = TGT.step === "calH" || TGT.step === "calV" || TGT.step === "measure";
+  const reticle = calibrating ? "#32FF32" : "#FF4D4D";
   const cx = cv.width / 2, cy = cv.height / 2;
-  const rr = markReticlePx() / 2;
-  g.strokeStyle = "#FF4D4D"; g.lineWidth = 1.5 * dpr;
+  const rr = calibrating ? 0 : markReticlePx() / 2;
+  g.strokeStyle = reticle; g.lineWidth = 1.5 * dpr;
   if (rr > 3) { g.beginPath(); g.arc(cx, cy, rr, 0, 7); g.stroke(); }
   g.beginPath();
   g.moveTo(cx - 26 * dpr, cy); g.lineTo(cx - (rr > 3 ? rr + 3 * dpr : 3 * dpr), cy);
@@ -5463,7 +5481,7 @@ function markPaint() {
   /* The exact centre. The arms stop short of it on purpose: a crosshair whose
      lines meet hides the very point you are trying to place, and on a gridline
      or a hole edge that last half-millimetre is the whole job. */
-  g.fillStyle = "#FF4D4D";
+  g.fillStyle = reticle;
   g.beginPath(); g.arc(cx, cy, 1.25 * dpr, 0, 7); g.fill();
 
   markChrome();
@@ -5481,6 +5499,13 @@ function markChrome() {
   const back = el.querySelector("#markback");
   if (back) back.textContent = (step === "calH" && !(TGT.marks || []).length) ? "Cancel" : "Back";
 
+  if (step === "measure") {
+    count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
+    skip.hidden = true;
+    undo.hidden = !(TGT.marks || []).length;
+    if (back) back.textContent = "Done";
+    return;
+  }
   if (step === "calH" || step === "calV") {
     count.textContent = (TGT.marks || []).length === 0 ? "first end" : "second end";
     skip.hidden = step !== "calV";
@@ -5576,6 +5601,12 @@ ACT["tgt-confirm"] = () => {
   if (!p) return;
   const step = TGT.step;
 
+  if (step === "measure") {
+    TGT.marks.push(p);
+    if (TGT.marks.length === 2) measureDone();
+    else markPaint();
+    return;
+  }
   if (step === "calH" || step === "calV") {
     TGT.marks.push(p);
     if (TGT.marks.length === 2) calDone(step);
@@ -5599,9 +5630,18 @@ ACT["tgt-back"] = () => {
   if (!TGT) return;
   const step = TGT.step;
 
+  if (step === "measure") {
+    const id = TGT.target.id;
+    TGT.marks = [];
+    TGT.measuring = false;
+    markClose();
+    targetSheet(id);
+    return;
+  }
+
   /* Part-way through a pair of calibration marks: drop them and start the
      pair again rather than leaving the stage. */
-  if ((step === "calH" || step === "calV") && (TGT.marks || []).length) {
+  if ((step === "calH" || step === "calV" || step === "measure") && (TGT.marks || []).length) {
     TGT.marks = [];
     markPaint();
     return;
@@ -5708,7 +5748,10 @@ ACT["tgt-callen"] = (axis) => {
   if (axis === "v") {
     TGT.cal.refLenV = len;
     TGT.cal.refUnitV = v.unit || "in";
-    closeSheet();
+    /* calApply opens the next sheet itself. Closing this one first pops a
+       history entry and opening pushes one straight back, and the two race:
+       on a phone the sheet shut and nothing reopened, which looked like being
+       thrown back to the Targets screen. */
     calApply();
     return;
   }
@@ -5733,12 +5776,6 @@ function calApply() {
     refLenV: c.refLenV, refUnitV: c.refUnitV,
     segPxH: c.segPxH, segPxV: c.segPxV, axisSkew: c.axisSkew,
   });
-  /* The two axes should agree to a fraction of a per cent on a flat target.
-     A large disagreement is nearly always one of two things, and both are
-     worth catching before the numbers are believed. */
-  if (c.axisSkew != null && Math.abs(c.axisSkew) > 0.03) {
-    toast(`The two references disagree by ${Math.abs(c.axisSkew * 100).toFixed(0)}%. Check the down one.`);
-  }
   setupSheet();
 }
 
@@ -5752,7 +5789,21 @@ function setupSheet() {
   const f = gun(fid);
   const dia = t.bulletDia || (f ? bulletDiaFor(f.caliber) : null) || 0.224;
 
-  openSheet("The shot", `
+  /* A disagreement between the axes is worth saying plainly and then getting
+     out of the way. Cant does not cause it — rotating a flat target changes no
+     distance — so it means either the photograph was taken off-square, or the
+     two references were not the same physical length. Neither stops anything. */
+  const skew = t.axisSkew;
+  const skewNote = (skew != null && Math.abs(skew) > 0.02)
+    ? `<div class="note flag">The down reference works out
+        ${esc(Math.abs(skew * 100).toFixed(0))}% ${skew > 0 ? "shorter" : "longer"} per inch than
+        the one across. That is a photograph taken about
+        ${esc(Math.round(Math.acos(1 / (1 + Math.abs(skew))) * 180 / Math.PI))} degrees off square,
+        or two references that were not actually the same length. Group size is barely
+        affected either way; the horizontal-against-vertical split is.</div>`
+    : "";
+
+  openSheet("The shot", skewNote + `
     <label class="f"><span>Firearm</span>
       <select name="firearmId" data-act-change="tgt-gunpick" id="tgtgun">
         ${selOptsGrouped(S.firearms, fid, (x) => x.name, (x) => x.caliber || "Caliber not set")}
@@ -5784,6 +5835,10 @@ function setupSheet() {
     </div>
     <label class="f"><span>Notes</span>
       <textarea name="notes" placeholder="Wind, position, barrel, anything worth knowing later">${esc(t.notes || "")}</textarea></label>
+    <div class="note">By that calibration the photograph covers
+      <b>${esc(t.widthIn.toFixed(2))}&#8243; across</b> and ${esc(t.heightIn.toFixed(2))}&#8243; down.
+      If that is obviously wrong for what is in the frame, the reference length was
+      wrong, and everything downstream will be wrong by the same proportion.</div>
     <button class="btn pri wide" data-act="tgt-setup-go">Mark the point of aim</button>`);
 }
 
@@ -5886,6 +5941,71 @@ ACT["tgt-done"] = () => {
   render();
 };
 
+/* ------------------------------------------------------------- measuring */
+/* A ruler, for checking calibration against something known.
+
+   Worth having because a scale error is invisible in the output: every figure
+   stays plausible and they are all wrong by the same proportion. Two symptoms
+   give it away and both point the same way — the reticle drawn at bullet
+   diameter not matching the holes, and group sizes disagreeing with another
+   app by a constant factor. This settles which. */
+ACT["tgt-measure"] = async (id) => {
+  const t = targetOf(id) || (TGT && TGT.target.id === id ? TGT.target : null);
+  if (!t) return;
+  const bmp = await targetBitmap(t);
+  if (!bmp) { toast("The photograph is not on this device."); return; }
+  TGT = TGT && TGT.target.id === id ? TGT : { target: t, committed: true, groups: [], current: null };
+  TGT.bmp = bmp;
+  TGT.marks = [];
+  TGT.measuring = true;
+  closeSheet();
+  targetStep("measure");
+};
+
+/* The decoded photograph for a target, from this device or from OneDrive. */
+async function targetBitmap(t) {
+  if (TGT && TGT.target.id === t.id && TGT.bmp) return TGT.bmp;
+  const d = (S.docs || []).find((x) => x.ownerType === "target" && x.ownerId === t.id);
+  if (!d) return null;
+  const blob = await docBlob(d);
+  if (!blob) return null;
+  try { return await createImageBitmap(blob, { imageOrientation: "from-image" }); }
+  catch (e) { try { return await createImageBitmap(blob); } catch (e2) { return null; } }
+}
+
+function measureDone() {
+  const [a, b] = TGT.marks;
+  const t = TGT.target;
+  /* The stored photograph is a downscaled copy, so its pixel dimensions are
+     not the ones calibration was done at. Normalised marks do not care, which
+     is the reason they are stored that way: the distance is taken on the
+     calibrated frame, in inches, not on whatever pixels are to hand. */
+  const dx = (a[0] - b[0]) * t.widthIn;
+  const dy = (a[1] - b[1]) * t.heightIn;
+  const inches = Math.hypot(dx, dy);
+  TGT.marks = [];
+  markClose();
+  openSheet("That measures", `
+    <div class="gnums">
+      ${num("Distance", inches.toFixed(3) + "\u2033")}
+      ${num("In millimetres", (inches * 25.4).toFixed(1) + " mm")}
+      ${num("Across", Math.abs(dx).toFixed(3) + "\u2033")}
+      ${num("Down", Math.abs(dy).toFixed(3) + "\u2033")}
+    </div>
+    <p class="hint" style="margin-top:10px">Measure the same thing with a ruler or
+      calipers. If the two disagree, the reference length used at calibration was
+      wrong by that proportion, and every figure on this target is wrong by the same
+      proportion in the same direction.</p>
+    <div class="note">Reading <b>smaller</b> than the ruler means the reference was
+      called shorter than it really is, and every group will read small. Reading
+      larger means the opposite. Marking across and down separately tells you whether
+      it is one axis or both.</div>
+    <div class="btnrow" style="flex-direction:column">
+      <button class="btn wide" data-act="tgt-measure" data-id="${esc(t.id)}">Measure something else</button>
+      <button class="btn pri wide" style="margin-top:8px" data-act="tgt-open" data-id="${esc(t.id)}">Done</button>
+    </div>`);
+}
+
 /* ---------------------------------------------------------------- results */
 ACT["tgt-open"] = (id) => targetSheet(id);
 
@@ -5902,6 +6022,8 @@ function targetSheet(id) {
     <div class="kv"><dt>Distance</dt><dd>${fmt(t.distance)} ${esc(t.distanceUnit || "yd")}</dd></div>
     <div class="kv"><dt>Calibrated on</dt><dd>${esc(String(t.refLen))} ${esc(t.refUnit || "in")}${
       t.squared ? ", both axes" : ", across only"}</dd></div>
+    <div class="kv"><dt>Frame covers</dt><dd>${esc(n(t.widthIn).toFixed(2))}&#8243; &times; ${
+      esc(n(t.heightIn).toFixed(2))}&#8243;</dd></div>
     ${t.tempF != null ? `<div class="kv"><dt>Temperature</dt><dd>${fmt(t.tempF)}&deg;F</dd></div>` : ""}
   </dl>`;
   if (!t.squared) {
@@ -5937,10 +6059,11 @@ function targetSheet(id) {
   }
 
   h += `<div class="btnrow" style="margin-top:16px;flex-direction:column">
-    ${TGT && TGT.target.id === id && TGT.bmp
-      ? `<button class="btn pri wide" data-act="tgt-another">Mark another group on this target</button>
+    <button class="btn wide" data-act="tgt-measure" data-id="${esc(id)}">Check the scale</button>
+    ${TGT && TGT.target.id === id && TGT.bmp && !TGT.measuring
+      ? `<button class="btn pri wide" style="margin-top:8px" data-act="tgt-another">Mark another group on this target</button>
          <button class="btn wide" style="margin-top:8px" data-act="tgt-done">Finished</button>`
-      : `<button class="btn wide dgr" data-act="tgt-del" data-id="${esc(id)}">Delete this target</button>`}
+      : `<button class="btn wide dgr" style="margin-top:8px" data-act="tgt-del" data-id="${esc(id)}">Delete this target</button>`}
     </div>`;
 
   openSheet(dshow(t.date) + " target", h);
