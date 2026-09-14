@@ -3629,7 +3629,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-f548a0";
+const APP_VERSION = "2026.09.14-b10af1";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -4670,48 +4670,77 @@ function bulletDiaFor(caliber) {
    horizontal-against-vertical split, which is the number that is supposed to
    tell velocity stringing from wind. Calibrating both axes costs one more
    drag and removes the term. */
-function calibrate(o) {
-  const inH = refIn(o.refLen, o.refUnit);
-  const inV = refIn(o.refLenV == null ? o.refLen : o.refLenV, o.refUnitV || o.refUnit);
-  /* segPx is the true length of the marked segment in image pixels, not the
-     length of one of its components. A target photographed with the grid
-     canted in the frame has both marks running diagonally, and taking only
-     the horizontal or vertical part of them understates the reference by
-     cos(angle) — 1.5 per cent at ten degrees, and it grows fast. Rotation in
-     the plane of the photograph changes no distance at all, so the length of
-     the segment is the right thing to measure and is immune to it. */
-  const segH = Math.abs(n(o.segPxH));
-  const segV = o.segPxV == null ? null : Math.abs(n(o.segPxV));
-  if (!(inH > 0) || !(segH > 0) || !(o.imgW > 0) || !(o.imgH > 0)) return null;
+/* One scale, from one or more reference segments.
 
-  const pxPerInH = segH / inH;
-  const widthIn = n(o.imgW) / pxPerInH;
-  /* With only one axis marked, square pixels and a square-on photograph are
-     assumed, so the vertical scale is the horizontal one. Marking the second
-     axis replaces that assumption with a measurement, which matters only when
-     the photograph was taken off-square; a canted but flat-on photograph
-     should now give the same answer either way. */
-  const pxPerInV = (segV > 0 && inV > 0) ? segV / inV : pxPerInH;
-  const heightIn = n(o.imgH) / pxPerInV;
+   The earlier design took a horizontal reference for the horizontal scale and
+   a vertical one for the vertical scale. That was wrong twice over.
+
+   It is the wrong model. Two independent scale factors describe a photograph
+   squashed along the image axes, which is not a thing a camera does. Real
+   off-square photography is perspective: the scale varies across the frame,
+   and near-field parts of the target are larger than far-field ones. A pair of
+   constants cannot express that. It is also unidentifiable in the presence of
+   cant — once the target is rotated in the frame, a gridline running "across"
+   is not the image's x axis, and two segment lengths cannot separate rotation
+   from stretching.
+
+   And it made accuracy worse. Marking error is roughly constant in pixels, so
+   it divides by the length of the reference: on a typical photograph a 1-inch
+   reference carries a few per cent, a 4-inch one carries well under one. The
+   second reference added a second short measurement to go wrong rather than
+   averaging away the first.
+
+   So the model is a single scale, isotropic, which is exactly right for a flat
+   target photographed square-on and completely unbothered by cant, since
+   rotating a photograph changes no distance. Further references make the
+   estimate better rather than adding a dimension to it: total pixels over
+   total inches, which weights a long reference above a short one for free. If
+   two references disagree, that is reported, because disagreement means the
+   photograph was not square-on and is worth knowing rather than modelling. */
+function calibrate(o) {
+  const list = (o && o.refs ? o.refs : []).filter((r) => r && n(r.segPx) > 0);
+  const refs = list.map((r) => {
+    const inches = refIn(r.len, r.unit || "in");
+    return { segPx: Math.abs(n(r.segPx)), len: n(r.len), unit: r.unit || "in", inches,
+             pxPerIn: inches > 0 ? Math.abs(n(r.segPx)) / inches : 0 };
+  }).filter((r) => r.inches > 0);
+  if (!refs.length || !(o.imgW > 0) || !(o.imgH > 0)) return null;
+
+  const px = refs.reduce((t, r) => t + r.segPx, 0);
+  const inches = refs.reduce((t, r) => t + r.inches, 0);
+  const pxPerIn = px / inches;
+
+  /* How far apart the individual references are, worst pair. Anything much
+     above a per cent or two means perspective, not measurement. */
+  const each = refs.map((r) => r.pxPerIn);
+  const lo = Math.min.apply(null, each), hi = Math.max.apply(null, each);
+  const spread = refs.length > 1 && lo > 0 ? (hi / lo - 1) : null;
 
   return {
-    widthIn, heightIn,
-    pxPerInH, pxPerInV,
-    refLen: n(o.refLen), refLenV: o.refLenV == null ? null : n(o.refLenV),
-    refUnit: o.refUnit || "in", refUnitV: o.refUnitV || o.refUnit || "in",
-    segPxH: segH, segPxV: segV || null,
+    pxPerIn,
+    widthIn: n(o.imgW) / pxPerIn,
+    heightIn: n(o.imgH) / pxPerIn,
+    refs, spread,
+    /* The shortest reference used, because that is what limits the result and
+       it is the one thing the interface should nag about. */
+    shortestIn: Math.min.apply(null, refs.map((r) => r.inches)),
     imgW: n(o.imgW), imgH: n(o.imgH),
-    squared: !!(segV > 0),
-    /* How far apart the two axes came out. On a flat target this should be a
-       fraction of a per cent; a large figure means the photograph was taken
-       well off-square, or the two references were not the same length. */
-    axisSkew: (segV > 0 && inV > 0) ? (pxPerInV / pxPerInH - 1) : null,
   };
 }
 
-/* The true pixel length of a segment given as two normalised marks. */
+/* The true pixel length of a segment given as two normalised marks. Both
+   components are scaled back to pixels first, because a normalised coordinate
+   is a fraction of a different number on each axis. */
 function segPx(a, b, imgW, imgH) {
   return Math.hypot((a[0] - b[0]) * n(imgW), (a[1] - b[1]) * n(imgH));
+}
+
+/* The scale error a marking slip of `slipPx` at each end produces, for a
+   reference of `inches`. Constant in pixels, so it divides by length: this is
+   the whole reason a long reference is worth the extra second it takes. */
+function calSlip(inches, pxPerIn, slipPx) {
+  if (!(inches > 0) || !(pxPerIn > 0)) return null;
+  return (2 * (slipPx == null ? 4 : slipPx)) / (inches * pxPerIn);
 }
 
 /* A normalised mark as inches on the target, origin at the top left. */
@@ -5036,12 +5065,12 @@ let MARKPINCH = null;
 /* ------------------------------------------------------------------ steps */
 const TGT_STEPS = {
   calH: {
-    head: "Calibrate: across",
-    hint: "Line the reticle up on one end of a known horizontal distance, then confirm. Do the other end next.",
+    head: "Calibrate",
+    hint: "Both ends of a distance you know. Use the longest one on the target \u2014 six inches is far better than one.",
   },
   calV: {
-    head: "Calibrate: down",
-    hint: "The same length, measured vertically. This removes the error an off-square photograph puts into the vertical.",
+    head: "Second reference",
+    hint: "Optional, and a check rather than a correction: a second distance, ideally across the other way.",
   },
   poa: { head: "Point of aim", hint: "Where you were aiming, not where the group landed." },
   measure: {
@@ -5443,13 +5472,18 @@ function markPaint() {
   if (cur) {
     if (cur.poa) {
       const p = markToScreen(cur.poa);
-      g.strokeStyle = "#7FB069"; g.lineWidth = 2 * dpr;
+      /* Placed, so it goes dark blue: lime is what you are still moving. A
+         white underlay keeps it visible on a dark bull, which is exactly where
+         an aim point usually sits. */
+      g.strokeStyle = "rgba(255,255,255,0.55)"; g.lineWidth = 4 * dpr;
+      g.beginPath(); g.arc(p.x, p.y, 11 * dpr, 0, 7); g.stroke();
+      g.strokeStyle = "#12379B"; g.lineWidth = 2 * dpr;
       g.beginPath(); g.arc(p.x, p.y, 11 * dpr, 0, 7); g.stroke();
       g.beginPath(); g.moveTo(p.x - 16 * dpr, p.y); g.lineTo(p.x - 3 * dpr, p.y);
       g.moveTo(p.x + 3 * dpr, p.y); g.lineTo(p.x + 16 * dpr, p.y);
       g.moveTo(p.x, p.y - 16 * dpr); g.lineTo(p.x, p.y - 3 * dpr);
       g.moveTo(p.x, p.y + 3 * dpr); g.lineTo(p.x, p.y + 16 * dpr); g.stroke();
-      g.fillStyle = "#7FB069";
+      g.fillStyle = "#12379B";
       g.beginPath(); g.arc(p.x, p.y, 1.25 * dpr, 0, 7); g.fill();
     }
     const r = markReticlePx() / 2 || 7 * dpr;
@@ -5463,11 +5497,12 @@ function markPaint() {
     });
   }
 
-  /* The reticle, last, so nothing covers it. Lime while calibrating, because
-     it is being laid over a printed gridline rather than a hole and red on
-     black ink is the hardest pairing to judge. */
+  /* The reticle, last, so nothing covers it. Lime throughout: it is laid over
+     printed gridlines and over bullet holes in black paper, and lime is the
+     one colour that reads against both. A placed mark changes colour so that
+     what is done and what is being placed can never be confused. */
   const calibrating = TGT.step === "calH" || TGT.step === "calV" || TGT.step === "measure";
-  const reticle = calibrating ? "#32FF32" : "#FF4D4D";
+  const reticle = "#32FF32";
   const cx = cv.width / 2, cy = cv.height / 2;
   const rr = calibrating ? 0 : markReticlePx() / 2;
   g.strokeStyle = reticle; g.lineWidth = 1.5 * dpr;
@@ -5700,13 +5735,13 @@ function calDone(step) {
     markPaint();
     return;
   }
-  if (step === "calH") { TGT.cal.segPxH = px; TGT.marks = []; calSheet("h"); }
-  else { TGT.cal.segPxV = px; TGT.marks = []; calSheet("v"); }
+  TGT.cal.pending = px;
+  TGT.marks = [];
+  calSheet(step === "calH" ? "h" : "v");
 }
 
 function calSkip() {
   TGT.marks = [];
-  TGT.cal.segPxV = null;
   calApply();
 }
 
@@ -5715,67 +5750,88 @@ function calSkip() {
    until you are looking at the photograph. */
 function calSheet(axis, again) {
   markClose();
-  const u = (axis === "v" ? TGT.cal.refUnitV : TGT.cal.refUnit) || TGT.cal.refUnit || "in";
-  const cur = axis === "v"
-    ? (TGT.cal.refLenV == null ? TGT.cal.refLen : TGT.cal.refLenV)
-    : TGT.cal.refLen;
+  const u = TGT.cal.refUnit || "in";
+  const cur = TGT.cal.lastLen || 1;
   void again;
-  openSheet(axis === "v" ? "How long was the down one?" : "How long was that?", `
-    <p class="hint">The real distance between the two marks. A longer reference is
-      a smaller error for the same effort, so use the longest increment you could
-      hold the reticle on.${axis === "v"
-        ? " This is asked separately because it does not have to match the one across,\n        and assuming it did would put any difference straight into the vertical scale."
-        : ""}</p>
+  /* What this reference will cost, in scale error, at the length being
+     entered. Shown live because it is the single biggest lever on accuracy
+     and it is completely invisible otherwise. */
+  const pxPerIn = TGT.cal.pending / refIn(cur, u);
+  const slip = calSlip(refIn(cur, u), pxPerIn, 4);
+  openSheet("How long was that?", `
+    <p class="hint">The real distance between the two marks.</p>
     <label class="f"><span>Distance</span>
       <input name="len" type="number" step="0.01" inputmode="decimal"
-        value="${esc(String(cur || 1))}"></label>
+        data-act-change="tgt-callen-preview" id="tgtlen"
+        value="${esc(String(cur))}"></label>
     <label class="f"><span>Units</span>
       <select name="unit">
         <option value="in"${u === "in" ? " selected" : ""}>inches</option>
         <option value="cm"${u === "cm" ? " selected" : ""}>centimetres</option>
         <option value="mm"${u === "mm" ? " selected" : ""}>millimetres</option>
       </select></label>
+    <div class="note" id="tgtslip">${slipNote(slip)}</div>
     <div class="note">Printers shrink a page when they are set to fit it. If this
       target came off your own printer, measure a gridline with a ruler once and use
       that figure rather than what the file says.</div>
     <button class="btn pri wide" data-act="tgt-callen" data-id="${esc(axis)}">Continue</button>`);
 }
 
+/* Marking error is a few pixels however careful you are, so its effect on the
+   scale is set almost entirely by how long the reference is. */
+function slipNote(slip) {
+  if (slip == null) return "";
+  const pct = slip * 100;
+  if (pct < 0.4) return `A reference this long holds the scale to about
+    ${pct.toFixed(2)}%, which is better than anything else in the measurement.`;
+  if (pct < 1.2) return `This reference holds the scale to roughly ${pct.toFixed(1)}%.
+    Acceptable, though a longer one costs nothing.`;
+  return `<b>A reference this short leaves about ${pct.toFixed(1)}% of scale error</b>, and
+    every figure on this target will be wrong by that much in the same direction.
+    Use the longest known distance on the target instead.`;
+}
+
+ACT["tgt-callen-preview"] = () => {
+  const el = $("#tgtlen"), box = $("#tgtslip");
+  if (!el || !box || !TGT) return;
+  const u = ($("#sheetbody").querySelector('[name="unit"]') || {}).value || "in";
+  const inches = refIn(n(el.value), u);
+  box.innerHTML = inches > 0
+    ? slipNote(calSlip(inches, TGT.cal.pending / inches, 4)) : "";
+};
+
 ACT["tgt-callen"] = (axis) => {
   const v = readForm($("#sheetbody"));
   const len = n(v.len);
   if (!(len > 0)) { toast("That length needs to be above zero."); return; }
-  if (axis === "v") {
-    TGT.cal.refLenV = len;
-    TGT.cal.refUnitV = v.unit || "in";
-    /* calApply opens the next sheet itself. Closing this one first pops a
-       history entry and opening pushes one straight back, and the two race:
-       on a phone the sheet shut and nothing reopened, which looked like being
-       thrown back to the Targets screen. */
-    calApply();
-    return;
-  }
-  TGT.cal.refLen = len;
+  TGT.cal.refs = TGT.cal.refs || [];
+  TGT.cal.refs.push({ segPx: TGT.cal.pending, len, unit: v.unit || "in" });
   TGT.cal.refUnit = v.unit || "in";
-  closeSheet();
-  targetStep("calV");
+  TGT.cal.lastLen = len;
+  TGT.cal.pending = null;
+  if (axis === "h") { closeSheet(); targetStep("calV"); return; }
+  /* calApply opens the next sheet itself. Closing this one first pops a
+     history entry and opening pushes one straight back, and the two race. */
+  calApply();
 };
 
 /* Both spans known: turn them into the target's extent in inches. */
 function calApply() {
   const c = calibrate({
-    refLen: TGT.cal.refLen, refUnit: TGT.cal.refUnit,
-    refLenV: TGT.cal.refLenV, refUnitV: TGT.cal.refUnitV,
-    segPxH: TGT.cal.segPxH, segPxV: TGT.cal.segPxV,
-    imgW: TGT.target.imgW, imgH: TGT.target.imgH,
+    refs: TGT.cal.refs, imgW: TGT.target.imgW, imgH: TGT.target.imgH,
   });
   if (!c) { toast("That calibration did not work out. Start again."); TGT = null; markClose(); render(); return; }
+  /* Recalibrating edits a record that is already in the log, and TGT.target is
+     that same object, so the snapshot has to be taken before it is touched. */
+  if (TGT.recal) snapshot("recalibrate target");
   Object.assign(TGT.target, {
-    widthIn: c.widthIn, heightIn: c.heightIn, squared: c.squared,
-    refLen: c.refLen, refUnit: c.refUnit,
-    refLenV: c.refLenV, refUnitV: c.refUnitV,
-    segPxH: c.segPxH, segPxV: c.segPxV, axisSkew: c.axisSkew,
+    widthIn: c.widthIn, heightIn: c.heightIn, pxPerIn: c.pxPerIn,
+    refs: c.refs.map((r) => ({ segPx: r.segPx, len: r.len, unit: r.unit })),
+    refLen: c.refs[0].len, refUnit: c.refs[0].unit,
+    spread: c.spread, shortestIn: c.shortestIn,
+    slip: calSlip(c.shortestIn, c.pxPerIn, 4),
   });
+  if (TGT.recal) { finishRecal(); return; }
   setupSheet();
 }
 
@@ -5793,14 +5849,18 @@ function setupSheet() {
      out of the way. Cant does not cause it — rotating a flat target changes no
      distance — so it means either the photograph was taken off-square, or the
      two references were not the same physical length. Neither stops anything. */
-  const skew = t.axisSkew;
-  const skewNote = (skew != null && Math.abs(skew) > 0.02)
-    ? `<div class="note flag">The down reference works out
-        ${esc(Math.abs(skew * 100).toFixed(0))}% ${skew > 0 ? "shorter" : "longer"} per inch than
-        the one across. That is a photograph taken about
-        ${esc(Math.round(Math.acos(1 / (1 + Math.abs(skew))) * 180 / Math.PI))} degrees off square,
-        or two references that were not actually the same length. Group size is barely
-        affected either way; the horizontal-against-vertical split is.</div>`
+  /* Two references disagreeing means perspective: the photograph was not
+     taken square-on. It is reported rather than corrected, because a pair of
+     scale factors is not what perspective looks like and pretending otherwise
+     makes the numbers worse, not better. */
+  const spread = t.spread;
+  const skewNote = (spread != null && spread > 0.02)
+    ? `<div class="note flag">The two references disagree by
+        ${esc((spread * 100).toFixed(0))}%, which means this photograph was taken about
+        ${esc(Math.round(Math.acos(1 / (1 + spread)) * 180 / Math.PI))} degrees off square.
+        The scale used is the average, so group size is close; the split between
+        horizontal and vertical spread is the part not to trust. Photograph square-on
+        if that split matters.</div>`
     : "";
 
   openSheet("The shot", skewNote + `
@@ -5941,6 +6001,38 @@ ACT["tgt-done"] = () => {
   render();
 };
 
+/* ----------------------------------------------------------- recalibrate */
+/* Redo the scale on a target already in the log.
+
+   This works only because marks are stored normalised to the photograph
+   rather than in inches: changing the scale moves every impact and aim point
+   with it, and nothing has to be marked again. A target measured on too short
+   a reference is therefore recoverable rather than a write-off. */
+ACT["tgt-recal"] = async (id) => {
+  const t = targetOf(id);
+  if (!t) return;
+  const bmp = await targetBitmap(t);
+  if (!bmp) { toast("The photograph is not on this device."); return; }
+  TGT = { target: t, committed: true, groups: [], current: null, recal: true,
+    bmp, marks: [], cal: { refUnit: t.refUnit || "in", lastLen: t.refLen || 1 },
+    fitted: false };
+  closeSheet();
+  targetStep("calH");
+};
+
+function finishRecal() {
+  const id = TGT.target.id;
+  /* calApply has already updated the record in place and snapshotted before
+     it did; this only has to persist it. */
+  save();
+  render();
+  const keep = TGT.bmp;
+  TGT = { target: targetOf(id), committed: true, groups: [], current: null, bmp: keep };
+  markClose();
+  targetSheet(id);
+  toast("Recalibrated. Every group on this target has moved with it.");
+}
+
 /* ------------------------------------------------------------- measuring */
 /* A ruler, for checking calibration against something known.
 
@@ -6020,16 +6112,23 @@ function targetSheet(id) {
   let h = `<dl class="card">
     <div class="kv"><dt>Date</dt><dd style="font-family:var(--sans)">${esc(dshow(t.date))}</dd></div>
     <div class="kv"><dt>Distance</dt><dd>${fmt(t.distance)} ${esc(t.distanceUnit || "yd")}</dd></div>
-    <div class="kv"><dt>Calibrated on</dt><dd>${esc(String(t.refLen))} ${esc(t.refUnit || "in")}${
-      t.squared ? ", both axes" : ", across only"}</dd></div>
+    <div class="kv"><dt>Calibrated on</dt><dd>${esc((t.refs || [{ len: t.refLen, unit: t.refUnit }])
+      .map((r) => `${r.len}${r.unit || "in"}`).join(" + "))}</dd></div>
     <div class="kv"><dt>Frame covers</dt><dd>${esc(n(t.widthIn).toFixed(2))}&#8243; &times; ${
       esc(n(t.heightIn).toFixed(2))}&#8243;</dd></div>
     ${t.tempF != null ? `<div class="kv"><dt>Temperature</dt><dd>${fmt(t.tempF)}&deg;F</dd></div>` : ""}
   </dl>`;
-  if (!t.squared) {
-    h += `<div class="note" style="margin-top:10px">Only the horizontal was calibrated,
-      so the split between horizontal and vertical spread carries whatever tilt was in
-      the photograph. Group size and mean radius are unaffected.</div>`;
+  if (t.slip != null && t.slip > 0.012) {
+    h += `<div class="note flag" style="margin-top:10px">This target was calibrated on
+      ${esc(n(t.shortestIn).toFixed(2))}&#8243;, which leaves roughly
+      ${esc((t.slip * 100).toFixed(1))}% of scale error. Every figure below is wrong by
+      about that much, all in the same direction. Recalibrating on a longer reference
+      fixes it without remarking anything.</div>`;
+  }
+  if (t.spread != null && t.spread > 0.02) {
+    h += `<div class="note" style="margin-top:10px">The references disagreed by
+      ${esc((t.spread * 100).toFixed(0))}%, so this photograph was off square. Group size is
+      close; the horizontal-against-vertical split is the part not to trust.</div>`;
   }
   if (t.notes) h += `<div class="note" style="margin-top:10px">${esc(t.notes)}</div>`;
 
@@ -6060,6 +6159,7 @@ function targetSheet(id) {
 
   h += `<div class="btnrow" style="margin-top:16px;flex-direction:column">
     <button class="btn wide" data-act="tgt-measure" data-id="${esc(id)}">Check the scale</button>
+    <button class="btn wide" style="margin-top:8px" data-act="tgt-recal" data-id="${esc(id)}">Recalibrate</button>
     ${TGT && TGT.target.id === id && TGT.bmp && !TGT.measuring
       ? `<button class="btn pri wide" style="margin-top:8px" data-act="tgt-another">Mark another group on this target</button>
          <button class="btn wide" style="margin-top:8px" data-act="tgt-done">Finished</button>`
