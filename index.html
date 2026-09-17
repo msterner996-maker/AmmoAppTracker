@@ -3650,7 +3650,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.14-57311b";
+const APP_VERSION = "2026.09.17-930125";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -5279,6 +5279,106 @@ function aggregateTarget(targetId, firearmId, ammoId) {
   return aggregateFor(firearmId, ammoId, { groups: gs, distIn: t ? distIn(t) : 0 });
 }
 
+/* ---------------------------------------------------------- composite */
+/* Several groups laid over one another on a single aiming point.
+
+   Every shot is plotted as its offset from the aim point of its own group, so
+   groups fired on different days at different points of aim all land in one
+   picture. That answers a different question from the pooled figure above it,
+   and the difference matters:
+
+     pooled sigma  centres each group on itself first, so it measures how
+                   tightly the rifle shoots and ignores where the groups sat
+     composite     keeps the offsets, so it measures where a shot actually
+                   goes relative to where you aimed — dispersion and zero
+                   drift together, which is what decides whether you hit
+
+   A composite spread is therefore always at least as large as the pooled one,
+   and the gap between them is how much of your miss is the rifle wandering
+   rather than the rifle scattering. Both are reported. */
+const COMPOSITE_COLOURS = [
+  "#5AC8FA", "#7FD86A", "#E0679E", "#E9B44C", "#9C8CFF",
+  "#4DD6FF", "#F08A5D", "#6EE7C7", "#D96BD9", "#B7C34D",
+];
+
+function composite(entries) {
+  const use = (entries || []).filter((e) => e && e.t && e.g && n(e.t.widthIn) > 0);
+  if (!use.length) return null;
+
+  const shots = [];
+  const groups = [];
+  const pooled = [];
+
+  use.forEach((e, gi) => {
+    const pts = impactsOf(e.t, e.g);
+    const poa = e.g.poa ? toInches(e.t, e.g.poa) : null;
+    if (!pts.length || !poa) return;
+    const colour = COMPOSITE_COLOURS[groups.length % COMPOSITE_COLOURS.length];
+
+    /* x right, y down, matching the photograph; the reported offsets flip the
+       vertical so up is positive the way a turret is marked. */
+    const rel = pts.map((p) => ({ x: p.x - poa.x, y: p.y - poa.y }));
+    const c = centroidOf(rel);
+    const own = groupStats(pts);
+
+    rel.forEach((p, i) => shots.push({
+      x: p.x, y: p.y, group: groups.length, shot: i + 1, colour,
+      flag: flagOf(e.g, i),
+    }));
+    pooled.push({ pts, zero: zeroOf(e.t, e.g) });
+    groups.push({
+      id: e.g.id, colour, n: rel.length,
+      label: e.label || (gun(e.g.firearmId) || {}).name || "Group",
+      sub: e.sub || [(ammoOf(e.g.ammoId) || {}).brand, dshow(e.t.date)].filter(Boolean).join(" \u00b7 "),
+      es: own ? own.es : 0,
+      mr: own ? own.mr : 0,
+      poi: { right: c.x, up: -c.y },
+      distIn: distIn(e.t),
+      targetId: e.t.id,
+    });
+  });
+
+  if (!shots.length) return null;
+
+  const all = shots.map((s) => ({ x: s.x, y: s.y }));
+  const stats = groupStats(all);
+  const mpi = stats.centroid;
+
+  /* Angular figures need one distance. Mixing 50 and 100 yard groups into one
+     picture is meaningful in inches and meaningless in minutes, so the angle is
+     offered only when they agree. */
+  const dists = Array.from(new Set(groups.map((g) => g.distIn).filter(Boolean)));
+  const one = dists.length === 1 ? dists[0] : null;
+
+  const agg = aggregate(pooled);
+
+  return {
+    shots, groups,
+    n: shots.length,
+    es: stats.es,
+    mr: stats.mr,
+    sigma: stats.sigma,
+    sdH: stats.sdH, sdV: stats.sdV,
+    width: stats.width, height: stats.height,
+    /* Mean point of impact, relative to the aim point. */
+    mpi: { right: mpi.x, up: -mpi.y },
+    mpiOffset: Math.hypot(mpi.x, mpi.y),
+    /* The same shots with each group re-centred: dispersion without the drift. */
+    pooled: agg,
+    distIn: one,
+    distances: dists.length,
+    /* How much of the composite spread is groups sitting apart rather than
+       shots scattering. Zero when every group landed in the same place.
+
+       Measured against the pooled mean radius as observed, not the one the
+       Rayleigh model predicts: the composite figure is a plain mean of
+       distances, so the only like-for-like comparison is a plain mean of
+       distances. Comparing it to the modelled value leaves a few per cent of
+       daylight between two numbers that should be identical. */
+    drift: agg && agg.mrObserved > 0 ? stats.mr / agg.mrObserved - 1 : null,
+  };
+}
+
 /* A distance in whole units for a label, from inches. */
 function distLabel(inches, unit) {
   if (!(inches > 0)) return "";
@@ -5342,8 +5442,11 @@ RENDER.targets = () => {
   const tgts = S.targets || [];
   const groups = S.groups || [];
 
-  let h = `<div class="btnrow" style="margin-bottom:14px">
-    <button class="btn pri wide" data-act="tgt-new">Measure a target</button></div>`;
+  let h = `<div class="btnrow" style="margin-bottom:14px;flex-direction:column">
+    <button class="btn pri wide" data-act="tgt-new">Measure a target</button>
+    ${(S.groups || []).length > 1
+      ? `<button class="btn wide" style="margin-top:8px" data-act="cmp-new">Create composite group</button>`
+      : ""}</div>`;
   h += unitPanel();
 
   if (!groups.length) {
@@ -6733,6 +6836,9 @@ function targetSheet(id) {
 
   h += `<div class="btnrow" style="margin-top:16px;flex-direction:column">
     <button class="btn pri wide" data-act="tgt-overlay" data-id="${esc(id)}">Overlay and share</button>
+    ${gs.length > 1
+      ? `<button class="btn wide" style="margin-top:8px" data-act="cmp-new" data-id="${esc(id)}">Create composite group</button>`
+      : ""}
     <button class="btn wide" style="margin-top:8px" data-act="tgt-measure" data-id="${esc(id)}">Check the scale</button>
     <button class="btn wide" style="margin-top:8px" data-act="tgt-recal" data-id="${esc(id)}">Recalibrate</button>
     ${TGT && TGT.target.id === id && TGT.bmp && !TGT.measuring
@@ -7655,6 +7761,483 @@ async function ovlShare() {
       /* Cancelled, or refused. Fall through to saving rather than complaining. */
       if (e && e.name === "AbortError") return;
     }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  toast("Saved.");
+}
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Composite groups.
+
+   Several groups drawn on one aiming point, so that a rifle's behaviour across
+   a morning or across a year can be looked at as one picture rather than as a
+   list of numbers that have to be held in the head at once.
+
+   There is no photograph here, and that is deliberate. Once every shot is
+   expressed as an offset from its own aim point, the paper it was fired at is
+   irrelevant — and insisting on one would rule out the case this exists for,
+   which is groups from different days on different targets.
+   ========================================================================== */
+
+let CMP = null;
+
+/* ------------------------------------------------------------- choosing */
+ACT["cmp-new"] = (preset) => {
+  const gs = S.groups || [];
+  if (gs.length < 2) { toast("Mark at least two groups first."); return; }
+  CMP = { pick: {}, firearmId: null, ammoId: null, view: null };
+  /* Opened from a target: that target's groups come pre-selected, which is the
+     common case of several points of aim on one page. */
+  if (preset) {
+    const mine = groupsFor(preset);
+    mine.forEach((g) => { CMP.pick[g.id] = true; });
+    if (mine.length) { CMP.firearmId = mine[0].firearmId; CMP.ammoId = mine[0].ammoId; }
+  } else {
+    const last = gs[gs.length - 1];
+    CMP.firearmId = last.firearmId;
+  }
+  cmpPicker();
+};
+
+function cmpPicker() {
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+
+  const rifles = [];
+  (S.groups || []).forEach((g) => { if (rifles.indexOf(g.firearmId) < 0) rifles.push(g.firearmId); });
+  const fid = CMP.firearmId || rifles[0];
+
+  const mine = (S.groups || [])
+    .filter((g) => g.firearmId === fid && ts[g.targetId] && n(ts[g.targetId].widthIn) > 0 && g.poa)
+    .sort((a, b) => String(ts[b.targetId].date || "").localeCompare(String(ts[a.targetId].date || "")));
+
+  const chosen = mine.filter((g) => CMP.pick[g.id]);
+  const dists = Array.from(new Set(chosen.map((g) => distIn(ts[g.targetId]))));
+
+  let h = `<label class="f"><span>Firearm</span>
+    <select name="firearmId" data-act-change="cmp-rifle" id="cmprifle">
+      ${selOptsGrouped(rifles.map(gun).filter(Boolean), fid,
+        (x) => x.name, (x) => x.caliber || "Caliber not set")}
+    </select></label>`;
+
+  if (!mine.length) {
+    h += `<div class="empty"><b>Nothing to combine</b>
+      This rifle has no marked groups with a point of aim on a calibrated target.</div>`;
+  } else {
+    h += `<div class="btnrow" style="margin:6px 0 10px">
+      <button class="btn sm" data-act="cmp-all">Select all</button>
+      <button class="btn sm" data-act="cmp-none">Clear</button></div>
+      <div class="rows">`;
+    mine.forEach((g) => {
+      const t = ts[g.targetId];
+      const s = gstats(t, g);
+      const a = ammoOf(g.ammoId);
+      h += `<label class="row" style="align-items:center;gap:10px">
+        <input type="checkbox" data-act-change="cmp-pick" name="g-${esc(g.id)}"${
+          CMP.pick[g.id] ? " checked" : ""} style="width:auto">
+        <span class="grow"><span class="ttl">${esc(dshow(t.date))} &middot;
+          ${esc(a ? ammoLabel(a) : "Load removed")}</span>
+        <span class="meta">${esc(distLabel(distIn(t), t.distanceUnit))} &middot;
+          ${plural(s ? s.n : 0, "shot")}${s ? " &middot; " + esc(showLen(s.es, t, "size")) : ""}
+          &middot; ${esc(kindLabel(g.kind || "loadtest"))}</span></span></label>`;
+    });
+    h += `</div>`;
+  }
+
+  if (dists.length > 1) {
+    h += `<div class="note flag" style="margin-top:10px">These groups were not all shot at
+      the same distance. They will still combine, and the picture is honest in inches, but
+      no figure in minutes means anything across two distances so none is shown.</div>`;
+  }
+
+  h += `<div class="note" style="margin-top:10px">Every shot is drawn as its offset from
+    the aim point of its own group, so groups from different days and different targets
+    land in one picture. The spread that comes out includes the groups sitting apart from
+    one another, not just the shots scattering \\u2014 which is the point, because that is
+    what decides whether you hit.</div>
+    <button class="btn pri wide" data-act="cmp-go"${chosen.length < 2 ? " disabled" : ""}>
+      ${chosen.length < 2 ? "Choose at least two groups" : `Combine ${fmt(chosen.length)} groups`}
+    </button>`;
+
+  openSheet("Create composite group", h);
+}
+
+ACT["cmp-rifle"] = () => {
+  const sel = $("#cmprifle");
+  if (!sel || !CMP) return;
+  CMP.firearmId = sel.value;
+  CMP.pick = {};
+  cmpPicker();
+};
+
+ACT["cmp-pick"] = () => {
+  if (!CMP) return;
+  ($("#sheetbody") || document).querySelectorAll('[name^="g-"]').forEach((el) => {
+    CMP.pick[el.name.slice(2)] = el.checked;
+  });
+  cmpPicker();
+};
+
+ACT["cmp-all"] = () => {
+  ($("#sheetbody") || document).querySelectorAll('[name^="g-"]').forEach((el) => {
+    CMP.pick[el.name.slice(2)] = true;
+  });
+  cmpPicker();
+};
+
+ACT["cmp-none"] = () => { CMP.pick = {}; cmpPicker(); };
+
+ACT["cmp-go"] = () => {
+  const ts = {};
+  (S.targets || []).forEach((t) => { ts[t.id] = t; });
+  const entries = (S.groups || [])
+    .filter((g) => CMP.pick[g.id])
+    .map((g) => ({ g, t: ts[g.targetId] }))
+    .filter((e) => e.t);
+  const c = composite(entries);
+  if (!c) { toast("Those groups cannot be combined."); return; }
+  CMP.data = c;
+  CMP.hidden = {};
+  CMP.zoom = 1;
+  closeSheet();
+  cmpLayer().classList.add("on");
+  cmpFit();
+  cmpPaint();
+};
+
+/* ---------------------------------------------------------------- layer */
+function cmpLayer() {
+  let el = $("#cmp");
+  if (el) return el;
+  el = document.createElement("div");
+  el.className = "mark";
+  el.id = "cmp";
+  el.innerHTML = `
+    <div class="markhead"><b id="cmphead">Composite group</b><span id="cmphint"></span></div>
+    <canvas id="cmpcv"></canvas>
+    <div class="markzoom">
+      <button data-cmp="in" aria-label="Zoom in">+</button>
+      <button data-cmp="out" aria-label="Zoom out">&minus;</button>
+      <button data-cmp="fit" aria-label="Fit">&#10019;</button>
+    </div>
+    <div class="markbar">
+      <span class="mb-l"><button class="btn" data-cmp="close">Close</button></span>
+      <span class="mb-c"><button class="btn" data-cmp="stats">Numbers</button></span>
+      <span class="mb-r"><button class="btn pri" data-cmp="share">Share</button></span>
+    </div>`;
+  document.body.appendChild(el);
+  const cv = el.querySelector("#cmpcv");
+  cv.addEventListener("pointerdown", cmpDown);
+  cv.addEventListener("pointermove", cmpMove);
+  cv.addEventListener("pointerup", cmpUp);
+  cv.addEventListener("pointercancel", cmpUp);
+  el.querySelectorAll("[data-cmp]").forEach((b) => {
+    b.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      cmpAct(b.dataset.cmp);
+    });
+  });
+  return el;
+}
+
+const cmpShots = () => CMP.data.shots.filter((s) => !CMP.hidden[CMP.data.groups[s.group].id]);
+
+/* Fit so the widest shot, plus a margin, is on screen. */
+function cmpFit() {
+  const cv = $("#cmpcv");
+  if (!cv || !CMP || !CMP.data) return;
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  let reach = 0;
+  CMP.data.shots.forEach((s) => { reach = Math.max(reach, Math.hypot(s.x, s.y)); });
+  reach = Math.max(reach * 1.35, 0.25);
+  CMP.reach = reach;
+  CMP.pxPerIn = (Math.min(cv.width, cv.height) / 2) / reach * (CMP.zoom || 1);
+}
+
+/* A ring spacing that lands on a round number in whatever unit is shown. */
+function cmpRingStep() {
+  const u = units().size;
+  const metric = u === "cm" || u === "mm";
+  const inches = CMP.reach;
+  const cand = metric
+    ? [0.1, 0.2, 0.5, 1, 2, 5].map((cm) => cm / 2.54)
+    : [0.1, 0.25, 0.5, 1, 2, 5, 10];
+  for (const c of cand) if (inches / c <= 4.5) return c;
+  return cand[cand.length - 1];
+}
+
+function cmpPaint() {
+  const cv = $("#cmpcv");
+  if (!cv || !CMP || !CMP.data) return;
+  const g = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const cx = cv.width / 2, cy = cv.height / 2;
+  const k = CMP.pxPerIn;
+
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = "#17110F";
+  g.fillRect(0, 0, cv.width, cv.height);
+
+  /* Rings every round unit out from the aim point, so the picture can be read
+     without a scale bar. */
+  const step = cmpRingStep();
+  g.strokeStyle = "rgba(233,180,76,0.16)";
+  g.lineWidth = 1 * dpr;
+  g.setLineDash([3 * dpr, 4 * dpr]);
+  for (let r = step; r <= CMP.reach * 1.4; r += step) {
+    g.beginPath(); g.arc(cx, cy, r * k, 0, 7); g.stroke();
+  }
+  g.setLineDash([]);
+
+  g.strokeStyle = "rgba(255,255,255,0.18)";
+  g.beginPath();
+  g.moveTo(0, cy); g.lineTo(cv.width, cy);
+  g.moveTo(cx, 0); g.lineTo(cx, cv.height);
+  g.stroke();
+
+  g.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+  g.fillStyle = "rgba(233,180,76,0.5)";
+  g.textBaseline = "bottom";
+  for (let r = step, i = 0; r <= CMP.reach * 1.4; r += step, i++) {
+    if (i % 1 === 0) {
+      const t = { distance: CMP.data.distIn || 0, distanceUnit: "in_raw" };
+      g.fillText(showLen(r, t, "size"), cx + r * k + 3 * dpr, cy - 3 * dpr);
+    }
+  }
+
+  /* Each shot at the size of the bullet that made it, coloured by its group. */
+  const shots = cmpShots();
+  const dia = cmpDia();
+  shots.forEach((s) => {
+    const x = cx + s.x * k, y = cy + s.y * k;
+    const rr = Math.max(7 * dpr, (dia * MARKER_SHRINK * k) / 2);
+    g.fillStyle = s.colour.replace(")", ", 0.18)").replace("#", "rgba(")
+      .length === s.colour.length ? s.colour : s.colour;
+    g.globalAlpha = 0.18;
+    g.fillStyle = s.colour;
+    g.beginPath(); g.arc(x, y, rr, 0, 7); g.fill();
+    g.globalAlpha = 1;
+    g.strokeStyle = s.flag ? SHOT_FLAGS[s.flag].colour : s.colour;
+    g.lineWidth = 2 * dpr;
+    g.beginPath(); g.arc(x, y, rr, 0, 7); g.stroke();
+
+    g.font = `600 ${Math.max(10 * dpr, rr * 0.95)}px ui-sans-serif, system-ui`;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.lineWidth = 3 * dpr; g.strokeStyle = "rgba(0,0,0,0.65)";
+    g.strokeText(String(s.shot), x, y);
+    g.fillStyle = "#FFFFFF";
+    g.fillText(String(s.shot), x, y);
+    g.textAlign = "start"; g.textBaseline = "alphabetic";
+  });
+
+  /* Each group's own point of impact, as a cross in its colour. */
+  CMP.data.groups.forEach((grp) => {
+    if (CMP.hidden[grp.id]) return;
+    const x = cx + grp.poi.right * k, y = cy - grp.poi.up * k;
+    g.strokeStyle = grp.colour; g.lineWidth = 3 * dpr;
+    g.beginPath();
+    g.moveTo(x - 11 * dpr, y); g.lineTo(x + 11 * dpr, y);
+    g.moveTo(x, y - 11 * dpr); g.lineTo(x, y + 11 * dpr);
+    g.stroke();
+  });
+
+  /* The aim point, and where the shots actually centred. */
+  g.strokeStyle = "#FFFFFF"; g.lineWidth = 2.5 * dpr;
+  g.beginPath(); g.arc(cx, cy, 13 * dpr, 0, 7); g.stroke();
+  g.fillStyle = "#FFE066";
+  g.beginPath(); g.arc(cx, cy, 4 * dpr, 0, 7); g.fill();
+
+  const vis = cmpVisible();
+  if (vis) {
+    const mx = cx + vis.mpi.right * k, my = cy - vis.mpi.up * k;
+    g.strokeStyle = "#FF4D4D"; g.lineWidth = 2.5 * dpr;
+    g.beginPath();
+    g.moveTo(mx, my - 11 * dpr); g.lineTo(mx + 11 * dpr, my);
+    g.lineTo(mx, my + 11 * dpr); g.lineTo(mx - 11 * dpr, my);
+    g.closePath(); g.stroke();
+    g.fillStyle = "#FF4D4D";
+    g.beginPath(); g.arc(mx, my, 3 * dpr, 0, 7); g.fill();
+  }
+
+  cmpChrome();
+}
+
+/* The bullet diameter to draw at. Several groups may be different loads of the
+   same calibre; the largest is the honest one to use. */
+function cmpDia() {
+  let d = 0;
+  (S.targets || []).forEach((t) => {
+    if (CMP.data.groups.some((grp) => grp.targetId === t.id)) d = Math.max(d, n(t.bulletDia));
+  });
+  return d || 0.224;
+}
+
+/* Recomputed over whatever is not hidden, so switching a group off changes the
+   numbers rather than just the picture. */
+function cmpVisible() {
+  const on = CMP.data.groups.filter((grp) => !CMP.hidden[grp.id]);
+  if (!on.length) return null;
+  const pts = cmpShots().map((s) => ({ x: s.x, y: s.y }));
+  if (pts.length < 1) return null;
+  const st = groupStats(pts);
+  return {
+    n: pts.length, groups: on.length,
+    es: st.es, mr: st.mr, sigma: st.sigma,
+    sdH: st.sdH, sdV: st.sdV,
+    mpi: { right: st.centroid.x, up: -st.centroid.y },
+    mpiOffset: Math.hypot(st.centroid.x, st.centroid.y),
+  };
+}
+
+function cmpChrome() {
+  const el = $("#cmp");
+  if (!el || !CMP) return;
+  const v = cmpVisible();
+  const t = { distance: CMP.data.distIn || 0, distanceUnit: "in_raw" };
+  el.querySelector("#cmphead").textContent = "Composite group";
+  el.querySelector("#cmphint").textContent = v
+    ? `${v.groups} groups \u00b7 ${v.n} shots \u00b7 ES ${showLen(v.es, t, "size")} \u00b7 MR ${
+      showLen(v.mr, t, "size")}`
+    : "Nothing showing";
+}
+
+/* ------------------------------------------------------------- gestures */
+let CMPP = [];
+let CMPPINCH = null;
+
+function cmpDown(ev) {
+  ev.currentTarget.setPointerCapture(ev.pointerId);
+  CMPP.push({ id: ev.pointerId, x: ev.clientX, y: ev.clientY });
+  if (CMPP.length === 2) {
+    const [a, b] = CMPP;
+    CMPPINCH = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: CMP.zoom || 1 };
+  }
+}
+function cmpMove(ev) {
+  const p = CMPP.find((q) => q.id === ev.pointerId);
+  if (!p) return;
+  p.x = ev.clientX; p.y = ev.clientY;
+  if (CMPP.length === 2 && CMPPINCH && CMPPINCH.dist > 4) {
+    const [a, b] = CMPP;
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    CMP.zoom = Math.max(0.4, Math.min(12, CMPPINCH.zoom * (d / CMPPINCH.dist)));
+    cmpFit(); cmpPaint();
+  }
+}
+function cmpUp(ev) {
+  try { ev.currentTarget.releasePointerCapture(ev.pointerId); } catch (e) {}
+  CMPP = CMPP.filter((q) => q.id !== ev.pointerId);
+  if (CMPP.length < 2) CMPPINCH = null;
+}
+
+/* -------------------------------------------------------------- actions */
+function cmpAct(what) {
+  if (!CMP) return;
+  if (what === "in") { CMP.zoom = Math.min(12, (CMP.zoom || 1) * 1.5); cmpFit(); cmpPaint(); return; }
+  if (what === "out") { CMP.zoom = Math.max(0.4, (CMP.zoom || 1) / 1.5); cmpFit(); cmpPaint(); return; }
+  if (what === "fit") { CMP.zoom = 1; cmpFit(); cmpPaint(); return; }
+  if (what === "stats") { cmpStats(); return; }
+  if (what === "share") { cmpShare(); return; }
+  if (what === "close") {
+    $("#cmp").classList.remove("on");
+    CMP = null;
+    closeSheet();
+    render();
+  }
+}
+
+function cmpStats() {
+  const c = CMP.data;
+  const v = cmpVisible();
+  if (!v) { toast("Nothing is showing."); return; }
+  const t = { distance: c.distIn || 0, distanceUnit: "in_raw" };
+  const sz = (x) => showLen(x, t, "size");
+  const zr = (x) => showLen(Math.abs(x), t, "zero");
+
+  let h = `<div class="gnums">
+    ${num("Groups", fmt(v.groups))}
+    ${num("Shots", fmt(v.n))}
+    ${num("Group size", sz(v.es), v.es.toFixed(3) + "\\u2033")}
+    ${num("Mean radius", sz(v.mr), v.mr.toFixed(3) + "\\u2033")}
+    ${num("Horizontal SD", sz(v.sdH))}
+    ${num("Vertical SD", sz(v.sdV))}
+  </div>
+  <div class="gnums" style="margin-top:10px">
+    ${num("MPI windage", (v.mpi.right >= 0 ? "R " : "L ") + zr(v.mpi.right))}
+    ${num("MPI elevation", (v.mpi.up >= 0 ? "U " : "D ") + zr(v.mpi.up))}
+  </div>`;
+
+  /* The honest comparison: the same shots with each group re-centred. */
+  if (c.pooled && c.groups.length === v.groups) {
+    h += `<section class="blk" style="margin-top:16px">
+      <h2 style="font-size:1rem">With each group centred on itself</h2>
+      <p class="hint">Mean radius ${esc(sz(c.pooled.mrObserved))}, against
+        ${esc(sz(v.mr))} above. The figure above keeps the offsets between groups,
+        so it says where a shot lands relative to the aim point. This one removes
+        them, so it says how tightly the rifle shoots.
+        ${c.drift != null && c.drift > 0.1
+          ? `The gap means about ${esc((c.drift * 100).toFixed(0))}% of the composite
+             spread is groups sitting apart rather than shots scattering \\u2014 a zero
+             that moved, or conditions that changed.`
+          : "They are close, so the groups all landed in much the same place."}</p>
+    </section>`;
+  }
+
+  h += `<section class="blk" style="margin-top:16px">
+    <h2 style="font-size:1rem">Groups in this composite</h2><div class="rows">`;
+  c.groups.forEach((grp) => {
+    const off = CMP.hidden[grp.id];
+    h += `<div class="row" data-act="cmp-toggle" data-id="${esc(grp.id)}"
+        style="align-items:center;gap:10px;${off ? "opacity:0.45" : ""}">
+      <span style="width:14px;height:14px;border-radius:50%;flex:0 0 auto;
+        background:${esc(grp.colour)}"></span>
+      <span class="grow"><span class="ttl">${esc(grp.label)}</span>
+        <span class="meta">${esc(grp.sub)} &middot; ${plural(grp.n, "shot")} &middot;
+          ES ${esc(sz(grp.es))}</span>
+        <span class="meta">POI: ${grp.poi.right >= 0 ? "R" : "L"} ${esc(zr(grp.poi.right))},
+          ${grp.poi.up >= 0 ? "U" : "D"} ${esc(zr(grp.poi.up))}</span></span>
+      <span class="chev">${off ? "off" : "on"}</span></div>`;
+  });
+  h += `</div></section>`;
+
+  if (c.distances > 1) {
+    h += `<div class="note flag" style="margin-top:12px">These groups span
+      ${fmt(c.distances)} distances, so the figures are in inches only. A minute of angle
+      is not the same length at two distances and averaging across them would mean
+      nothing.</div>`;
+  }
+
+  openSheet("Composite group", h);
+}
+
+ACT["cmp-toggle"] = (id) => {
+  if (!CMP) return;
+  CMP.hidden[id] = !CMP.hidden[id];
+  cmpPaint();
+  cmpStats();
+};
+
+async function cmpShare() {
+  const cv = $("#cmpcv");
+  if (!cv) return;
+  let blob = null;
+  try { blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.92)); } catch (e) {}
+  if (!blob) { toast("Could not make the image."); return; }
+  const name = `composite-${today()}.jpg`;
+  const file = (typeof File === "function") ? new File([blob], name, { type: "image/jpeg" }) : null;
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Composite group" }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }
   }
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
