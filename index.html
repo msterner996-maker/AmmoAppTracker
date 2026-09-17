@@ -3678,7 +3678,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.17-d9fb79";
+const APP_VERSION = "2026.09.17-39ba00";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -7935,8 +7935,12 @@ ACT["cmp-go"] = () => {
   CMP.zoom = 1;
   closeSheet();
   cmpLayer().classList.add("on");
-  cmpFit();
-  cmpPaint();
+  cmpSync();
+  /* And once more after the browser has actually laid it out. Reading a box
+     in the same tick it was shown gives whatever the layout engine last
+     computed, which on a first open is nothing. */
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(cmpSync);
+  else setTimeout(cmpSync, 0);
 };
 
 /* ---------------------------------------------------------------- layer */
@@ -7966,6 +7970,21 @@ function cmpLayer() {
     </div>`;
   document.body.appendChild(el);
   const cv = el.querySelector("#cmpcv");
+  /* Rotation, a keyboard appearing, a browser chrome bar sliding away: all
+     change the box without anything here being told. Watching the element is
+     more reliable than trying to think of every cause. */
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => {
+      if (!CMP || !CMP.data) return;
+      const r = cv.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+      /* Only when it really changed, or refitting would trip the observer
+         again and the two would chase each other. */
+      if (cv.width !== w || cv.height !== h) { cmpFit(); cmpPaint(); }
+    });
+    ro.observe(cv);
+  }
   cv.addEventListener("pointerdown", cmpDown);
   cv.addEventListener("pointermove", cmpMove);
   cv.addEventListener("pointerup", cmpUp);
@@ -8103,7 +8122,20 @@ function cmpPaint() {
   }
 
   cmpChrome();
+}
+
+/* Figures first, then measure, then draw.
+
+   The order is the whole of it. The canvas is the flexible element between the
+   header and the panel, so its height is not known until the panel has its
+   content. Measuring first sized the backing store to the full height, the
+   panel then appeared and squashed the element, and the browser scaled a tall
+   bitmap into a short box — which is why the first view came out warped and
+   looked right the moment the panel was collapsed and reopened. */
+function cmpSync() {
   cmpStats();
+  cmpFit();
+  cmpPaint();
 }
 
 /* The bullet diameter to draw at. Several groups may be different loads of the
@@ -8179,14 +8211,11 @@ function cmpAct(what) {
   if (!CMP) return;
   if (what === "in") { CMP.zoom = Math.min(12, (CMP.zoom || 1) * 1.5); cmpFit(); cmpPaint(); return; }
   if (what === "out") { CMP.zoom = Math.max(0.4, (CMP.zoom || 1) / 1.5); cmpFit(); cmpPaint(); return; }
-  if (what === "fit") { CMP.zoom = 1; cmpFit(); cmpPaint(); return; }
+  if (what === "fit") { CMP.zoom = 1; cmpSync(); return; }
   if (what === "stats" || what === "panel") {
     const p = $("#cmppanel");
     if (p) p.classList.toggle("closed");
-    /* The canvas is the flexible element between the header and the panel, so
-       its height changes when the panel does and the plot has to be refitted
-       or it stretches. */
-    cmpFit(); cmpPaint();
+    cmpSync();
     return;
   }
   if (what === "share") { cmpShare(); return; }
@@ -8290,7 +8319,9 @@ function cmpGroupList(c) {
 ACT["cmp-toggle"] = (id) => {
   if (!CMP) return;
   CMP.hidden[id] = !CMP.hidden[id];
-  cmpPaint();
+  /* Switching a group off shortens the panel, which lengthens the canvas, so
+     this has to go through the full sequence rather than just repaint. */
+  cmpSync();
 };
 
 async function cmpShare() {
