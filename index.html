@@ -259,6 +259,34 @@ dl{margin:0}
   display:flex;flex-direction:column;gap:6px}
 .markzoom button{width:38px;height:38px;border-radius:9px;border:1px solid #3A3F43;
   background:rgba(36,40,43,0.85);color:#E8E6E1;font-size:1.1rem;line-height:1}
+/* The composite's numbers sit under the picture rather than over it, so the
+   plot and the figures can be read together. Collapsible, because on a short
+   screen the plot is the thing you are actually looking at. */
+.cmppanel{background:#1C1512;border-top:1px solid rgba(233,180,76,0.22);
+  flex:0 0 auto;max-height:46vh;overflow-y:auto;overscroll-behavior:contain}
+.cmppanel.closed{overflow:hidden}
+.cmppanel.closed .cmpbody{display:none}
+.cmpgrab{display:block;width:44px;height:4px;border-radius:2px;margin:8px auto 4px;
+  background:rgba(233,180,76,0.35)}
+.cmpline{display:flex;align-items:baseline;gap:8px;padding:2px 14px 10px;
+  font-family:var(--sans);color:#E8E6E1;cursor:pointer}
+.cmpline b{font-size:1.0625rem;font-weight:600;color:#E9B44C}
+.cmpline span{font-size:0.8125rem;color:#A8A49C}
+.cmpline i{margin-left:auto;font-style:normal;color:#A8A49C;font-size:1rem}
+.cmpbody{padding:0 14px 14px}
+.cmpbody .gnums{background:rgba(233,180,76,0.18);border-color:rgba(233,180,76,0.18)}
+.cmpbody .gnums div{background:#241B17}
+.cmpbody .gnums span{color:#9A948C}
+.cmpbody .gnums b{color:#F2EFE9}
+.cmpbody .gnums em{color:#9A948C}
+.cmpbody h2{color:#E9B44C;margin:14px 0 4px}
+.cmpbody .hint{color:#A8A49C}
+.cmpbody .rows{border-color:rgba(255,255,255,0.10)}
+.cmpbody .row{background:#241B17;border-color:rgba(255,255,255,0.08)}
+.cmpbody .ttl{color:#F2EFE9}
+.cmpbody .meta{color:#A8A49C}
+.cmpbody .note{background:rgba(233,180,76,0.10);color:#D8D3CB;border-color:rgba(233,180,76,0.25)}
+.cmpdot{width:14px;height:14px;border-radius:50%;flex:0 0 auto}
 /* The overlay editor reuses the marking layer's chrome. */
 .markbar select{background:#24282B;border:1px solid #3A3F43;color:#E8E6E1;
   border-radius:7px;padding:7px 8px;font-size:0.8125rem;font-family:var(--sans);min-width:0}
@@ -3650,7 +3678,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.17-930125";
+const APP_VERSION = "2026.09.17-d9fb79";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -7926,6 +7954,11 @@ function cmpLayer() {
       <button data-cmp="out" aria-label="Zoom out">&minus;</button>
       <button data-cmp="fit" aria-label="Fit">&#10019;</button>
     </div>
+    <div class="cmppanel" id="cmppanel">
+      <span class="cmpgrab" data-cmp="panel"></span>
+      <div class="cmpline" id="cmpline" data-cmp="panel"></div>
+      <div class="cmpbody" id="cmpbody"></div>
+    </div>
     <div class="markbar">
       <span class="mb-l"><button class="btn" data-cmp="close">Close</button></span>
       <span class="mb-c"><button class="btn" data-cmp="stats">Numbers</button></span>
@@ -8070,6 +8103,7 @@ function cmpPaint() {
   }
 
   cmpChrome();
+  cmpStats();
 }
 
 /* The bullet diameter to draw at. Several groups may be different loads of the
@@ -8102,13 +8136,13 @@ function cmpVisible() {
 function cmpChrome() {
   const el = $("#cmp");
   if (!el || !CMP) return;
-  const v = cmpVisible();
+  const f = gun(CMP.firearmId);
+  el.querySelector("#cmphead").textContent = f ? f.name : "Composite group";
   const t = { distance: CMP.data.distIn || 0, distanceUnit: "in_raw" };
-  el.querySelector("#cmphead").textContent = "Composite group";
-  el.querySelector("#cmphint").textContent = v
-    ? `${v.groups} groups \u00b7 ${v.n} shots \u00b7 ES ${showLen(v.es, t, "size")} \u00b7 MR ${
-      showLen(v.mr, t, "size")}`
-    : "Nothing showing";
+  el.querySelector("#cmphint").textContent = CMP.data.distIn
+    ? `${f && f.caliber ? f.caliber + " \u00b7 " : ""}${distLabel(CMP.data.distIn, "yd")}`
+    : `${fmt(CMP.data.distances)} distances \u00b7 inches only`;
+  void t;
 }
 
 /* ------------------------------------------------------------- gestures */
@@ -8146,7 +8180,15 @@ function cmpAct(what) {
   if (what === "in") { CMP.zoom = Math.min(12, (CMP.zoom || 1) * 1.5); cmpFit(); cmpPaint(); return; }
   if (what === "out") { CMP.zoom = Math.max(0.4, (CMP.zoom || 1) / 1.5); cmpFit(); cmpPaint(); return; }
   if (what === "fit") { CMP.zoom = 1; cmpFit(); cmpPaint(); return; }
-  if (what === "stats") { cmpStats(); return; }
+  if (what === "stats" || what === "panel") {
+    const p = $("#cmppanel");
+    if (p) p.classList.toggle("closed");
+    /* The canvas is the flexible element between the header and the panel, so
+       its height changes when the panel does and the plot has to be refitted
+       or it stretches. */
+    cmpFit(); cmpPaint();
+    return;
+  }
   if (what === "share") { cmpShare(); return; }
   if (what === "close") {
     $("#cmp").classList.remove("on");
@@ -8156,13 +8198,31 @@ function cmpAct(what) {
   }
 }
 
+/* The figures, under the picture rather than over it. Kept on the same screen
+   on purpose: hiding a group and watching the spread change is the point of the
+   thing, and that does not work if the numbers are behind a sheet. */
 function cmpStats() {
+  const el = $("#cmpbody"), line = $("#cmpline");
+  if (!el || !CMP || !CMP.data) return;
   const c = CMP.data;
   const v = cmpVisible();
-  if (!v) { toast("Nothing is showing."); return; }
+  const closed = $("#cmppanel").classList.contains("closed");
+
+  if (!v) {
+    if (line) line.innerHTML = `<b>Nothing showing</b><span>every group is switched off</span>
+      <i>${closed ? "\u2303" : "\u2304"}</i>`;
+    el.innerHTML = `<p class="hint">Switch a group back on below.</p>` + cmpGroupList(c);
+    return;
+  }
   const t = { distance: c.distIn || 0, distanceUnit: "in_raw" };
   const sz = (x) => showLen(x, t, "size");
   const zr = (x) => showLen(Math.abs(x), t, "zero");
+
+  if (line) {
+    line.innerHTML = `<b>Group size ${esc(sz(v.es))}</b>
+      <span>${plural(v.n, "shot")} in ${plural(v.groups, "group")}</span>
+      <i>${closed ? "\u2303" : "\u2304"}</i>`;
+  }
 
   let h = `<div class="gnums">
     ${num("Groups", fmt(v.groups))}
@@ -8193,22 +8253,7 @@ function cmpStats() {
     </section>`;
   }
 
-  h += `<section class="blk" style="margin-top:16px">
-    <h2 style="font-size:1rem">Groups in this composite</h2><div class="rows">`;
-  c.groups.forEach((grp) => {
-    const off = CMP.hidden[grp.id];
-    h += `<div class="row" data-act="cmp-toggle" data-id="${esc(grp.id)}"
-        style="align-items:center;gap:10px;${off ? "opacity:0.45" : ""}">
-      <span style="width:14px;height:14px;border-radius:50%;flex:0 0 auto;
-        background:${esc(grp.colour)}"></span>
-      <span class="grow"><span class="ttl">${esc(grp.label)}</span>
-        <span class="meta">${esc(grp.sub)} &middot; ${plural(grp.n, "shot")} &middot;
-          ES ${esc(sz(grp.es))}</span>
-        <span class="meta">POI: ${grp.poi.right >= 0 ? "R" : "L"} ${esc(zr(grp.poi.right))},
-          ${grp.poi.up >= 0 ? "U" : "D"} ${esc(zr(grp.poi.up))}</span></span>
-      <span class="chev">${off ? "off" : "on"}</span></div>`;
-  });
-  h += `</div></section>`;
+  h += cmpGroupList(c);
 
   if (c.distances > 1) {
     h += `<div class="note flag" style="margin-top:12px">These groups span
@@ -8217,14 +8262,35 @@ function cmpStats() {
       nothing.</div>`;
   }
 
-  openSheet("Composite group", h);
+  el.innerHTML = h;
+}
+
+/* One row per group, with its colour, its own numbers, and where it landed.
+   Tapping a row takes it out of the picture and out of the figures. */
+function cmpGroupList(c) {
+  const t = { distance: c.distIn || 0, distanceUnit: "in_raw" };
+  const sz = (x) => showLen(x, t, "size");
+  const zr = (x) => showLen(Math.abs(x), t, "zero");
+  let h = `<h2 style="font-size:1rem">Groups in this composite</h2><div class="rows">`;
+  c.groups.forEach((grp) => {
+    const off = CMP.hidden[grp.id];
+    h += `<div class="row" data-act="cmp-toggle" data-id="${esc(grp.id)}"
+        style="align-items:center;gap:10px;${off ? "opacity:0.42" : ""}">
+      <span class="cmpdot" style="background:${esc(grp.colour)}"></span>
+      <span class="grow"><span class="ttl">${esc(grp.label)}</span>
+        <span class="meta">${esc(grp.sub)} &middot; ${plural(grp.n, "shot")} &middot;
+          ES ${esc(sz(grp.es))}</span>
+        <span class="meta">POI: ${grp.poi.right >= 0 ? "R" : "L"} ${esc(zr(grp.poi.right))},
+          ${grp.poi.up >= 0 ? "U" : "D"} ${esc(zr(grp.poi.up))}</span></span>
+      <span class="chev">${off ? "off" : "on"}</span></div>`;
+  });
+  return h + `</div>`;
 }
 
 ACT["cmp-toggle"] = (id) => {
   if (!CMP) return;
   CMP.hidden[id] = !CMP.hidden[id];
   cmpPaint();
-  cmpStats();
 };
 
 async function cmpShare() {
