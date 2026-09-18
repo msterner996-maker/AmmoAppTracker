@@ -434,6 +434,7 @@ dl{margin:0}
 </div>
 
 <input type="file" id="docfile" accept="application/pdf,.pdf" class="sr">
+<input type="file" id="xerofile" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="sr">
 <!-- accept is narrowed per owner type by ACT["doc-add"] before the picker opens. -->
 
 <div class="toast" id="toast"><span id="toastmsg"></span><button id="toastact" hidden></button></div>
@@ -3678,7 +3679,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.17-39ba00";
+const APP_VERSION = "2026.09.18-09493c";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -8346,6 +8347,460 @@ async function cmpShare() {
 </script>
 <script>
 "use strict";
+/* ==========================================================================
+   Importing a Garmin Xero session.
+
+   Two surprises in the real files, both worth knowing before reading this.
+
+   The first is that a Xero export named `.csv` is very often not a CSV. It is
+   an XLSX — a ZIP archive — with the wrong extension on it. So the format is
+   decided by looking at the first two bytes rather than by trusting the name:
+   `PK` means a spreadsheet whatever the file is called.
+
+   The second is that the app has no libraries and is not about to grow any, so
+   the spreadsheet is unpacked here. That is less work than it sounds: a ZIP
+   central directory is a fixed layout, and browsers can inflate a deflate
+   stream natively. Two files out of the archive — the sheet and the shared
+   strings — are all a Xero export needs.
+
+   Nothing is saved until it has been shown and confirmed. A chronograph string
+   is a measurement, and a measurement that arrived by a route nobody watched is
+   worth less than one typed in by hand.
+   ========================================================================== */
+
+const XERO_MAX = 8 * 1024 * 1024;
+
+let XERO = null;
+
+ACT["vel-import"] = () => {
+  const inp = $("#xerofile");
+  if (!inp) { toast("Cannot open the file picker here."); return; }
+  inp.value = "";
+  inp.click();
+};
+
+/* ----------------------------------------------------------------- unzip */
+/* Enough of the ZIP format to find a named file and inflate it. Reading the
+   central directory rather than scanning local headers, because only the
+   directory is authoritative about where each entry starts. */
+function zipEntries(buf) {
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  /* The end-of-central-directory record is last, after a comment of unknown
+     length, so it is found by searching backwards for its signature. */
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+
+  const out = {};
+  for (let i = 0; i < count; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) return null;
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nameLen));
+
+    /* The local header repeats the name and extra field, and its extra length
+       is often different from the directory's, so it has to be read again. */
+    const lNameLen = dv.getUint16(local + 26, true);
+    const lExtraLen = dv.getUint16(local + 28, true);
+    const start = local + 30 + lNameLen + lExtraLen;
+    out[name] = { method, start, csize };
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+async function zipRead(buf, entries, name) {
+  const e = entries[name];
+  if (!e) return null;
+  const slice = buf.slice(e.start, e.start + e.csize);
+  if (e.method === 0) return new TextDecoder().decode(slice);
+  if (e.method !== 8) return null;
+  /* Inflating without a library needs this, which arrived in Safari 16.4. An
+     older browser can still take a real CSV; it cannot take a spreadsheet, and
+     saying so beats a blank refusal. */
+  if (typeof DecompressionStream !== "function") throw new Error("no-inflate");
+  const ds = new DecompressionStream("deflate-raw");
+  const stream = new Blob([slice]).stream().pipeThrough(ds);
+  return new Response(stream).text();
+}
+
+/* ------------------------------------------------------------- the sheet */
+/* A1-style reference back to row and column numbers. */
+function cellRef(ref) {
+  const m = /^([A-Z]+)(\d+)$/.exec(ref || "");
+  if (!m) return null;
+  let col = 0;
+  for (let i = 0; i < m[1].length; i++) col = col * 26 + (m[1].charCodeAt(i) - 64);
+  return { col, row: Number(m[2]) };
+}
+
+/* Excel keeps dates as days since 1900, with a deliberate bug: it believes
+   1900 was a leap year, so everything after February 1900 is one day out and
+   the epoch has to be shifted to match. */
+function excelDate(serial) {
+  const ms = Math.round((n(serial) - 25569) * 86400000);
+  const d = new Date(ms);
+  return isFinite(d.getTime()) ? d : null;
+}
+
+async function xlsxGrid(buf) {
+  const entries = zipEntries(buf);
+  if (!entries) return null;
+  const sheetName = Object.keys(entries).find((k) => /^xl\/worksheets\/sheet1\.xml$/i.test(k))
+    || Object.keys(entries).find((k) => /^xl\/worksheets\/.*\.xml$/i.test(k));
+  if (!sheetName) return null;
+
+  const [sheetXml, sharedXml] = await Promise.all([
+    zipRead(buf, entries, sheetName),
+    zipRead(buf, entries, "xl/sharedStrings.xml"),
+  ]);
+  if (!sheetXml) return null;
+
+  const parse = (xml) => new DOMParser().parseFromString(xml, "application/xml");
+  const shared = [];
+  if (sharedXml) {
+    const sd = parse(sharedXml);
+    Array.from(sd.getElementsByTagName("si")).forEach((si) => {
+      /* A string may be split across several runs; the text is the
+         concatenation of every <t> under it. */
+      shared.push(Array.from(si.getElementsByTagName("t"))
+        .map((t) => t.textContent).join(""));
+    });
+  }
+
+  const doc = parse(sheetXml);
+  const grid = {};
+  Array.from(doc.getElementsByTagName("c")).forEach((c) => {
+    const at = cellRef(c.getAttribute("r"));
+    if (!at) return;
+    const type = c.getAttribute("t");
+    let val = null;
+    if (type === "inlineStr") {
+      val = Array.from(c.getElementsByTagName("t")).map((t) => t.textContent).join("");
+    } else {
+      const v = c.getElementsByTagName("v")[0];
+      if (!v) return;
+      const raw = v.textContent;
+      if (type === "s") val = shared[Number(raw)] != null ? shared[Number(raw)] : "";
+      else if (type === "str" || type === "e") val = raw;
+      else val = Number(raw);
+    }
+    grid[at.row] = grid[at.row] || {};
+    grid[at.row][at.col] = val;
+  });
+  return grid;
+}
+
+/* A plain CSV, for the exports that really are one. */
+function csvGrid(text) {
+  const grid = {};
+  String(text).replace(/^\ufeff/, "").split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim()) return;
+    /* Quoted fields may contain commas; doubled quotes are literal. */
+    const cells = [];
+    let cur = "", q = false;
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j];
+      if (q) {
+        if (ch === '"' && line[j + 1] === '"') { cur += '"'; j++; }
+        else if (ch === '"') q = false;
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { cells.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    cells.push(cur);
+    const row = {};
+    cells.forEach((c, k) => {
+      const t = c.trim();
+      if (t === "") return;
+      const num = Number(t.replace(/,/g, ""));
+      row[k + 1] = (t !== "" && isFinite(num) && /^-?[\d.]+$/.test(t)) ? num : t;
+    });
+    grid[i + 1] = row;
+  });
+  return grid;
+}
+
+/* ------------------------------------------------------- reading a Xero */
+/* The layout, as the device writes it: a title, a header row, one row per
+   shot, a dash, then labelled totals in the first two columns.
+
+   Read by looking for what each row is rather than by counting rows, because
+   the number of shots varies and a firmware update that adds a column should
+   not break the import. */
+function xeroRead(grid) {
+  const rows = Object.keys(grid).map(Number).sort((a, b) => a - b);
+  if (!rows.length) return null;
+
+  const txt = (r, c) => {
+    const v = grid[r] && grid[r][c];
+    return v == null ? "" : String(v).replace(/^\ufeff/, "").trim();
+  };
+  const numAt = (r, c) => {
+    const v = grid[r] && grid[r][c];
+    return typeof v === "number" ? v : (isFinite(Number(v)) && String(v).trim() !== "" ? Number(v) : null);
+  };
+
+  /* The header row is the one whose second column names a speed. */
+  let head = 0;
+  for (const r of rows) {
+    if (/speed/i.test(txt(r, 2))) { head = r; break; }
+  }
+  if (!head) return null;
+
+  const cols = {};
+  for (let c = 1; c <= 20; c++) {
+    const t = txt(head, c).toLowerCase();
+    if (!t) continue;
+    if (/^#/.test(t)) cols.no = c;
+    else if (/speed/.test(t)) cols.speed = c;
+    else if (/clean bore/.test(t)) cols.clean = c;
+    else if (/cold bore/.test(t)) cols.cold = c;
+    else if (/note/.test(t)) cols.note = c;
+    else if (/^time/.test(t)) cols.time = c;
+  }
+  if (!cols.speed) return null;
+
+  const shots = [];
+  let after = head;
+  for (const r of rows) {
+    if (r <= head) continue;
+    const v = numAt(r, cols.speed);
+    const no = cols.no ? numAt(r, cols.no) : null;
+    if (v != null && v > 0 && (no == null || no > 0)) {
+      shots.push({
+        no: no == null ? shots.length + 1 : no,
+        fps: v,
+        clean: cols.clean ? /^(y|yes|true|1|x)$/i.test(txt(r, cols.clean)) : false,
+        cold: cols.cold ? /^(y|yes|true|1|x)$/i.test(txt(r, cols.cold)) : false,
+        note: cols.note ? txt(r, cols.note) : "",
+      });
+      after = r;
+    } else if (shots.length) {
+      /* The dash row ends the shots; the totals follow. */
+      break;
+    }
+  }
+  if (!shots.length) return null;
+
+  /* The labelled figures below, matched on their labels. */
+  const meta = {};
+  for (const r of rows) {
+    if (r <= after) continue;
+    const label = txt(r, 1).toLowerCase();
+    if (!label) continue;
+    const v = grid[r] && grid[r][2];
+    if (/average speed/.test(label)) meta.avg = numAt(r, 2);
+    else if (/std ?dev/.test(label)) meta.sd = numAt(r, 2);
+    else if (/spread/.test(label)) meta.es = numAt(r, 2);
+    else if (/projectile weight/.test(label)) meta.grains = numAt(r, 2);
+    else if (/avg kinetic energy/.test(label)) meta.ke = numAt(r, 2);
+    else if (/^date/.test(label)) {
+      if (typeof v === "number") meta.date = excelDate(v);
+      else if (v) { const d = new Date(String(v)); if (isFinite(d.getTime())) meta.date = d; }
+    } else if (/session note/.test(label)) meta.note = txt(r, 2);
+  }
+
+  /* The title carries the Xero's own name for the session, which is usually
+     the load, and often repeats the bullet weight. */
+  const title = txt(rows[0], 1);
+  if (!meta.grains) {
+    const m = /(\d+(?:\.\d+)?)\s*gr/i.exec(title);
+    if (m) meta.grains = Number(m[1]);
+  }
+
+  return { title, shots, meta, cols };
+}
+
+/* --------------------------------------------------------------- accept */
+async function xeroAccept(file) {
+  if (!file) return;
+  if (file.size > XERO_MAX) { toast(`${kb(file.size)} is larger than this reads.`); return; }
+
+  let grid = null;
+  try {
+    const buf = await file.arrayBuffer();
+    const head = new Uint8Array(buf.slice(0, 2));
+    /* PK: a ZIP, so a spreadsheet, whatever the extension claims. Garmin
+       exports are routinely named .csv and are not. */
+    if (head[0] === 0x50 && head[1] === 0x4b) grid = await xlsxGrid(buf);
+    else grid = csvGrid(new TextDecoder().decode(buf));
+  } catch (e) {
+    if (e && e.message === "no-inflate") {
+      toast("This browser cannot open spreadsheets. Export the session as CSV, or use a newer browser.");
+      return;
+    }
+    console.error(e);
+    grid = null;
+  }
+  if (!grid) {
+    toast("That file could not be read. A Xero session export, .csv or .xlsx.");
+    return;
+  }
+
+  const read = xeroRead(grid);
+  if (!read) {
+    toast("No shots found in that file. Is it a Xero session export?");
+    return;
+  }
+  XERO = read;
+  xeroSheet();
+}
+
+/* Everything the file says, next to everything the app makes of it, before a
+   single thing is written. */
+function xeroSheet() {
+  const r = XERO;
+  const fps = r.shots.map((s) => s.fps);
+  const mine = vstats(fps);
+
+  /* Garmin divides by n; this app divides by n-1. Neither is wrong — one
+     describes the shots that were fired, the other estimates the load they
+     came from — but they differ by a few per cent on a short string and
+     someone comparing the two screens deserves to be told why rather than
+     left to wonder which is broken. */
+  const popSd = fps.length > 1
+    ? Math.sqrt(fps.reduce((t, v) => t + (v - mine.avg) * (v - mine.avg), 0) / fps.length)
+    : 0;
+
+  const dateStr = r.meta.date ? r.meta.date.toISOString().slice(0, 10) : today();
+  const cold = r.shots.filter((s) => s.cold).length;
+  const clean = r.shots.filter((s) => s.clean).length;
+
+  const agree = (mineV, theirs, tol) =>
+    (theirs == null) ? "" :
+    (Math.abs(mineV - theirs) <= (tol || 0.1)
+      ? `<span class="tag moss">matches</span>`
+      : `<span class="tag flag">file says ${esc(theirs.toFixed(1))}</span>`);
+
+  const guessF = (S.firearms || []).find((f) =>
+    r.title && r.title.toLowerCase().indexOf(String(f.name).toLowerCase()) > -1);
+  const guessA = (S.ammo || []).find((x) =>
+    r.meta.grains && n(x.grains) === n(r.meta.grains)
+    && (!guessF || calKey(x.caliber) === calKey(guessF.caliber)));
+
+  let h = `<div class="note">Read from the file. Nothing is saved until you confirm it.</div>
+    <dl class="card" style="margin-top:10px">
+      <div class="kv"><dt>Session</dt><dd style="font-family:var(--sans)">${
+        esc(r.title || "Untitled")}</dd></div>
+      <div class="kv"><dt>Shots</dt><dd>${fmt(fps.length)}</dd></div>
+      <div class="kv"><dt>Average</dt><dd>${esc(mine.avg.toFixed(1))} fps ${
+        agree(mine.avg, r.meta.avg, 0.15)}</dd></div>
+      <div class="kv"><dt>Extreme spread</dt><dd>${esc(mine.es.toFixed(1))} fps ${
+        agree(mine.es, r.meta.es, 0.15)}</dd></div>
+      <div class="kv"><dt>Standard deviation</dt><dd>${esc(mine.sd.toFixed(1))} fps</dd></div>
+      ${r.meta.grains ? `<div class="kv"><dt>Bullet</dt><dd>${esc(String(r.meta.grains))} gr</dd></div>` : ""}
+      ${cold || clean ? `<div class="kv"><dt>Marked</dt><dd>${
+        [cold ? plural(cold, "cold bore") : "", clean ? plural(clean, "clean bore") : ""]
+          .filter(Boolean).join(", ")}</dd></div>` : ""}
+    </dl>`;
+
+  if (r.meta.sd != null && Math.abs(mine.sd - popSd) > 0.05) {
+    h += `<div class="note" style="margin-top:10px">The Xero reports a standard deviation of
+      ${esc(r.meta.sd.toFixed(1))} and this shows ${esc(mine.sd.toFixed(1))}. Both are right.
+      Garmin divides by the number of shots, which describes the string you fired; this divides
+      by one fewer, which estimates the load those shots came from. On
+      ${fmt(fps.length)} shots that is a difference of
+      ${esc((Math.abs(mine.sd / popSd - 1) * 100).toFixed(1))}%. The average and the spread do
+      not depend on the choice, which is why they match exactly.</div>`;
+  }
+
+  h += `<label class="f" style="margin-top:12px"><span>Firearm</span>
+      <select name="firearmId" id="xerogun" data-act-change="xero-gun">
+        <option value="">Not linked</option>
+        ${selOptsGrouped(S.firearms || [], guessF ? guessF.id : "",
+          (x) => x.name, (x) => x.caliber || "Caliber not set")}
+      </select></label>
+    <label class="f"><span>Load</span>
+      <select name="ammoId" id="xeroammo">
+        <option value="">Not linked</option>
+        ${selOptsGrouped(S.ammo || [], guessA ? guessA.id : "",
+          (x) => ammoLabel(x), (x) => x.caliber || "Caliber not set")}
+      </select></label>
+    <label class="f"><span>Label</span>
+      <input name="ammoLabel" value="${esc(guessA ? ammoLabel(guessA) : (r.title || ""))}"></label>
+    <div class="f2">
+      <label class="f"><span>Date</span>
+        <input name="date" type="date" value="${esc(dateStr)}"></label>
+      <label class="f"><span>Barrel length</span>
+        <input name="barrelLengthIn" type="number" step="0.5" inputmode="decimal"
+          value="${esc(guessF && guessF.barrel ? String(guessF.barrel.lengthIn || "") : "")}"></label>
+    </div>
+    <label class="f"><span>Notes</span>
+      <textarea name="notes">${esc(r.meta.note || "")}</textarea></label>
+
+    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">
+      Every shot read from the file</summary>
+      <div class="mono-list" style="margin-top:8px">${r.shots.map((s) =>
+        `<div>${String(s.no).padStart(2, " ")}&nbsp; ${s.fps.toFixed(1)}${
+          s.cold ? " &middot; cold" : ""}${s.clean ? " &middot; clean" : ""}${
+          s.note ? " &middot; " + esc(s.note) : ""}</div>`).join("")}</div>
+    </details>
+
+    <button class="btn pri wide" style="margin-top:12px" data-act="xero-save">
+      Save ${fmt(fps.length)} shots</button>`;
+
+  openSheet("Import from Xero", h);
+}
+
+/* Picking a firearm narrows the loads to what it chambers, as elsewhere. */
+ACT["xero-gun"] = () => {
+  const sel = $("#xerogun"), am = $("#xeroammo");
+  if (!sel || !am) return;
+  const f = gun(sel.value);
+  const list = f ? ammoForGun(f) : (S.ammo || []);
+  am.innerHTML = `<option value="">Not linked</option>` + selOptsGrouped(
+    list, am.value, (x) => ammoLabel(x), (x) => x.caliber || "Caliber not set");
+};
+
+ACT["xero-save"] = () => {
+  if (!XERO) return;
+  const f = readForm($("#sheetbody"));
+  const label = String(f.ammoLabel || "").trim()
+    || (f.ammoId ? ammoLabel(ammoOf(f.ammoId)) : "") || XERO.title || "Imported string";
+
+  snapshot("import velocity string");
+  const v = {
+    id: uid("v"),
+    firearmId: f.firearmId || null,
+    firearmName: f.firearmId && gun(f.firearmId) ? gun(f.firearmId).name : "",
+    ammoId: f.ammoId || null,
+    ammoLabel: label,
+    barrelLengthIn: f.barrelLengthIn === "" || f.barrelLengthIn == null ? null : n(f.barrelLengthIn),
+    date: f.date || today(),
+    shots: XERO.shots.map((s) => s.fps),
+    notes: f.notes || "",
+    /* Kept because the device knew things the shot list does not: which shot
+       was from a cold or clean bore, and what it called the session. Costs a
+       few bytes and cannot be recovered later. */
+    source: "xero",
+    sourceTitle: XERO.title || null,
+    grains: XERO.meta.grains || null,
+    cold: XERO.shots.map((s, i) => (s.cold ? i : -1)).filter((i) => i >= 0),
+    clean: XERO.shots.map((s, i) => (s.clean ? i : -1)).filter((i) => i >= 0),
+  };
+  S.velocity.push(v);
+  const k = velKey(v);
+  if (typeof VEL_OPEN !== "undefined" && VEL_OPEN && !VEL_OPEN.includes(k)) {
+    VEL_OPEN = VEL_OPEN.concat([k]);
+  }
+  XERO = null;
+  commit(`${fmt(v.shots.length)} shots imported.`);
+  closeSheet();
+};
+</script>
+<script>
+"use strict";
 
 /* ========================================================= VELOCITY ==== */
 let VEL_OPEN = null;   // firearm keys whose strings are showing
@@ -8389,11 +8844,14 @@ RENDER.velocity = function () {
   let h = `<section class="blk"><h2>Velocity<span class="btnrow">
     ${allKeys.length > 1 ? `<button class="btn sm" data-act="vel-allopen"
       data-v="${everyOpen ? "0" : "1"}">${everyOpen ? "Collapse all" : "Expand all"}</button>` : ""}
+    <button class="btn sm" data-act="vel-import">Import</button>
     <button class="btn sm" data-act="vel-new">Add</button></span></h2>
     <p class="hint">Pick a firearm to see its loads. Average tells you where a load sits;
       SD and extreme spread tell you whether it will hold at distance.</p></section>`;
   if (!S.velocity.length) return h + emptyState("No strings yet",
-    "Record a chronograph string and the stats come with it.", "Add a string", "vel-new");
+    "Record a chronograph string by hand, or import a Garmin Xero session.",
+    "Add a string", "vel-new")
+    + `<div class="btnrow"><button class="btn wide" data-act="vel-import">Import from Xero</button></div>`;
 
   /* Build the branches: firearms that have data, in inventory order, then any
      string whose firearm is not in the list. */
@@ -8856,6 +9314,10 @@ document.addEventListener("change", (ev) => {
     if (t.dataset.wt === "ammoId") WT.ref10 = 0;
     if (t.dataset.wt === "containerId") WT.tare = 0;
     render();
+    return;
+  }
+  if (t.id === "xerofile" && t.files && t.files[0]) {
+    if (typeof xeroAccept === "function") xeroAccept(t.files[0]);
     return;
   }
   if (t.id === "docfile" && t.files && t.files[0]) {
