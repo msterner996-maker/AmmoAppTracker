@@ -434,7 +434,13 @@ dl{margin:0}
 </div>
 
 <input type="file" id="docfile" accept="application/pdf,.pdf" class="sr">
-<input type="file" id="xerofile" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="sr">
+<!-- No accept filter on purpose. Android's document picker and Google Drive
+     match on reported MIME type, and a file handed over by Drive often reports
+     application/octet-stream or a Google-specific type, so any filter greys out
+     the very file you are trying to pick. The format is identified from the
+     file's first bytes instead, which is more reliable anyway given Garmin
+     names spreadsheets .csv. -->
+<input type="file" id="xerofile" class="sr">
 <!-- accept is narrowed per owner type by ACT["doc-add"] before the picker opens. -->
 
 <div class="toast" id="toast"><span id="toastmsg"></span><button id="toastact" hidden></button></div>
@@ -3679,7 +3685,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.18-09493c";
+const APP_VERSION = "2026.09.18-57cd58";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -8503,7 +8509,14 @@ async function xlsxGrid(buf) {
 /* A plain CSV, for the exports that really are one. */
 function csvGrid(text) {
   const grid = {};
-  String(text).replace(/^\ufeff/, "").split(/\r?\n/).forEach((line, i) => {
+  const body = String(text).replace(/^\ufeff/, "");
+  /* Copying cells out of a spreadsheet gives tabs, not commas. Decided once
+     for the whole file by which separator appears more, because a session note
+     containing a comma should not change how a line is split. */
+  const tabs = (body.match(/\t/g) || []).length;
+  const commas = (body.match(/,/g) || []).length;
+  const sep = tabs > commas ? "\t" : ",";
+  body.split(/\r?\n/).forEach((line, i) => {
     if (!line.trim()) return;
     /* Quoted fields may contain commas; doubled quotes are literal. */
     const cells = [];
@@ -8515,7 +8528,7 @@ function csvGrid(text) {
         else if (ch === '"') q = false;
         else cur += ch;
       } else if (ch === '"') q = true;
-      else if (ch === ",") { cells.push(cur); cur = ""; }
+      else if (ch === sep) { cells.push(cur); cur = ""; }
       else cur += ch;
     }
     cells.push(cur);
@@ -8523,7 +8536,7 @@ function csvGrid(text) {
     cells.forEach((c, k) => {
       const t = c.trim();
       if (t === "") return;
-      const num = Number(t.replace(/,/g, ""));
+      const num = Number(sep === "," ? t : t.replace(/,/g, ""));
       row[k + 1] = (t !== "" && isFinite(num) && /^-?[\d.]+$/.test(t)) ? num : t;
     });
     grid[i + 1] = row;
@@ -8627,35 +8640,91 @@ async function xeroAccept(file) {
   if (!file) return;
   if (file.size > XERO_MAX) { toast(`${kb(file.size)} is larger than this reads.`); return; }
 
-  let grid = null;
+  let grid = null, kind = "?";
   try {
     const buf = await file.arrayBuffer();
-    const head = new Uint8Array(buf.slice(0, 2));
-    /* PK: a ZIP, so a spreadsheet, whatever the extension claims. Garmin
-       exports are routinely named .csv and are not. */
-    if (head[0] === 0x50 && head[1] === 0x4b) grid = await xlsxGrid(buf);
-    else grid = csvGrid(new TextDecoder().decode(buf));
+    kind = xeroSniff(buf);
+    if (kind === "xlsx") grid = await xlsxGrid(buf);
+    else if (kind === "xls") {
+      /* A real Excel 97 file: a compound document, an entirely different
+         format from the zipped XML of .xlsx and not something this can read.
+         Worth naming, because the file is usually called .xls either way and a
+         generic failure would send you looking in the wrong place. */
+      xeroStuck(file, kind, "That is an Excel 97 file, which this cannot open.");
+      return;
+    } else {
+      grid = csvGrid(new TextDecoder().decode(buf));
+    }
   } catch (e) {
     if (e && e.message === "no-inflate") {
-      toast("This browser cannot open spreadsheets. Export the session as CSV, or use a newer browser.");
+      xeroStuck(file, kind, "This browser is too old to open spreadsheets.");
       return;
     }
     console.error(e);
     grid = null;
   }
-  if (!grid) {
-    toast("That file could not be read. A Xero session export, .csv or .xlsx.");
-    return;
-  }
+  if (!grid) { xeroStuck(file, kind, "That file could not be read."); return; }
 
   const read = xeroRead(grid);
+  if (!read) { xeroStuck(file, kind, "No shots were found in it."); return; }
+  XERO = read;
+  xeroSheet();
+}
+
+/* What a file actually is, from its first bytes rather than its name. Garmin
+   names spreadsheets .csv and Drive renames things again on the way out, so
+   the extension is the least reliable thing about it. */
+function xeroSniff(buf) {
+  const b = new Uint8Array(buf.slice(0, 8));
+  if (b.length < 2) return "empty";
+  if (b[0] === 0x50 && b[1] === 0x4b) return "xlsx";          // PK: a zip
+  if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return "xls";
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "pdf";
+  return "text";
+}
+
+/* When it will not read, say what was found and offer the way through rather
+   than a dead end. Pasting always works: it needs no picker, no permissions
+   and no format detection. */
+function xeroStuck(file, kind, why) {
+  const named = {
+    xlsx: "a spreadsheet", xls: "an Excel 97 file", pdf: "a PDF",
+    text: "a text file", empty: "empty", "?": "unreadable",
+  }[kind] || "unrecognised";
+  openSheet("That import did not work", `
+    <div class="note flag">${esc(why)}</div>
+    <dl class="card" style="margin-top:10px">
+      <div class="kv"><dt>File</dt><dd style="font-family:var(--sans)">${
+        esc(String(file.name || "unnamed"))}</dd></div>
+      <div class="kv"><dt>Size</dt><dd>${esc(kb(file.size || 0))}</dd></div>
+      <div class="kv"><dt>Contents</dt><dd style="font-family:var(--sans)">${esc(named)}</dd></div>
+    </dl>
+    <p class="hint">The name means little here: Garmin exports spreadsheets called
+      <code>.csv</code>, and cloud storage renames them again. What matters is what is
+      inside, which is what this checked.</p>
+    <h2 style="font-size:1rem;margin-top:14px">Paste it instead</h2>
+    <p class="hint">Open the session in Google Sheets or any spreadsheet app, select the
+      cells, copy, and paste them here. Tabs or commas, either way. This needs no file
+      picker and no permissions, so it works when nothing else does.</p>
+    <label class="f"><span>Pasted session</span>
+      <textarea name="paste" rows="6" placeholder="#	Speed (FPS)
+1	2891.5
+2	2923.2"></textarea></label>
+    <button class="btn pri wide" data-act="xero-paste">Read what I pasted</button>`);
+}
+
+ACT["xero-paste"] = () => {
+  const v = readForm($("#sheetbody"));
+  const text = String(v.paste || "").trim();
+  if (!text) { toast("Paste the session first."); return; }
+  const read = xeroRead(csvGrid(text));
   if (!read) {
-    toast("No shots found in that file. Is it a Xero session export?");
+    toast("No shots in that. It needs the header row and the rows under it.");
     return;
   }
   XERO = read;
   xeroSheet();
-}
+};
 
 /* Everything the file says, next to everything the app makes of it, before a
    single thing is written. */
