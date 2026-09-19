@@ -3685,7 +3685,7 @@ const PERSIST_ASKED = "armory.persistAsked";
 const THEME_KEY = "armory.theme";
 /* Stamped by the build so the app and its service worker cache always agree.
    Shown on the Data screen, which answers "did my deploy actually land?". */
-const APP_VERSION = "2026.09.18-57cd58";
+const APP_VERSION = "2026.09.18-6e86b4";
 
 function plat() {
   const ua = navigator.userAgent || "";
@@ -8506,6 +8506,24 @@ async function xlsxGrid(buf) {
   return grid;
 }
 
+/* A cell's value, as a number where it is one.
+
+   The awkward case is the one the device actually writes: a quoted number with
+   thousands separators in it, `"2,891.5"`. Unquoted that is the text 2,891.5,
+   which Number() reads as NaN, so every shot looked like it had no speed and
+   the scan ran on into the totals and took those for shots instead.
+
+   Separators are only stripped from something already shaped like a grouped
+   number — three digits at a time, one optional decimal part. That leaves a
+   decimal comma alone, which matters wherever 2,5 means two and a half. */
+const GROUPED = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+const PLAIN = /^-?(\d+)?(\.\d+)?$/;
+function numOrText(t) {
+  if (GROUPED.test(t)) return Number(t.replace(/,/g, ""));
+  if (PLAIN.test(t) && /\d/.test(t)) return Number(t);
+  return t;
+}
+
 /* A plain CSV, for the exports that really are one. */
 function csvGrid(text) {
   const grid = {};
@@ -8536,8 +8554,7 @@ function csvGrid(text) {
     cells.forEach((c, k) => {
       const t = c.trim();
       if (t === "") return;
-      const num = Number(sep === "," ? t : t.replace(/,/g, ""));
-      row[k + 1] = (t !== "" && isFinite(num) && /^-?[\d.]+$/.test(t)) ? num : t;
+      row[k + 1] = numOrText(t);
     });
     grid[i + 1] = row;
   });
@@ -8561,7 +8578,12 @@ function xeroRead(grid) {
   };
   const numAt = (r, c) => {
     const v = grid[r] && grid[r][c];
-    return typeof v === "number" ? v : (isFinite(Number(v)) && String(v).trim() !== "" ? Number(v) : null);
+    if (typeof v === "number") return v;
+    if (v == null) return null;
+    const t = String(v).trim();
+    if (t === "") return null;
+    const parsed = numOrText(t);
+    return typeof parsed === "number" ? parsed : null;
   };
 
   /* The header row is the one whose second column names a speed. */
@@ -8588,9 +8610,17 @@ function xeroRead(grid) {
   let after = head;
   for (const r of rows) {
     if (r <= head) continue;
+    const first = txt(r, 1);
+    /* The device writes a bare dash between the shots and the totals. */
+    if (first === "-") break;
     const v = numAt(r, cols.speed);
     const no = cols.no ? numAt(r, cols.no) : null;
-    if (v != null && v > 0 && (no == null || no > 0)) {
+    /* When there is a shot-number column, a row without a number in it is not
+       a shot. Every total below is labelled in that column, so this alone is
+       enough to stop the scan wandering into them — which is what happened
+       once the speeds stopped parsing and there was nothing to stop on. */
+    const numbered = cols.no ? (no != null && no > 0) : true;
+    if (v != null && v > 0 && numbered) {
       shots.push({
         no: no == null ? shots.length + 1 : no,
         fps: v,
